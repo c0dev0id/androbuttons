@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Androbuttons</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_key_mapping">Key Mapping</string>
+    <string name="key_mapping_prompt">Press any key to map…</string>
+    <string name="notification_channel_name">Overlay Menu</string>
+    <string name="notification_channel_description">Overlay menu is active</string>
+    <string name="notification_running">Overlay menu running</string>
+</resources>
