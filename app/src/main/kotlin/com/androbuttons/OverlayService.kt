@@ -17,6 +17,8 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
@@ -54,6 +56,7 @@ class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var prefs: SharedPreferences
     private var overlayView: View? = null
+    private var windowParams: WindowManager.LayoutParams? = null
 
     private var currentScreen = MenuScreen.MAIN
     private var selectedIndex = 0
@@ -132,11 +135,20 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
+        windowParams = params
         windowManager.addView(view, params)
         overlayView = view
         view.requestFocus()
+        view.post {
+            view.translationX = view.width.toFloat()
+            view.animate()
+                .translationX(0f)
+                .setDuration(250)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
     }
 
     private fun removeOverlay() {
@@ -159,9 +171,9 @@ class OverlayService : Service() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            minimumWidth = 280.dp()
-            setPadding(20.dp(), 20.dp(), 20.dp(), 20.dp())
-            background = createRoundedBackground(surfaceColor, 16)
+            minimumWidth = 200.dp()
+            setPadding(20.dp(), 20.dp(), 0, 20.dp())
+            background = createLeftRoundedBackground(surfaceColor, 16)
             elevation = 8.dp().toFloat()
         }
 
@@ -456,7 +468,7 @@ class OverlayService : Service() {
                     "settings" -> navigateTo(MenuScreen.SETTINGS)
                     "dashboard" -> navigateTo(MenuScreen.DASHBOARD)
                     "create_note" -> navigateTo(MenuScreen.CREATE_NOTE)
-                    "exit" -> stopSelf()
+                    "exit" -> exitWithAnimation()
                 }
             }
             MenuScreen.SETTINGS -> {
@@ -514,7 +526,22 @@ class OverlayService : Service() {
     }
 
     private fun refreshOverlay() {
-        showOverlay()
+        val params = windowParams ?: return showOverlay()
+        removeOverlay()
+        val view = buildMenuView()
+        windowManager.addView(view, params)
+        overlayView = view
+        view.requestFocus()
+    }
+
+    private fun exitWithAnimation() {
+        val view = overlayView ?: run { stopSelf(); return }
+        view.animate()
+            .translationX(view.width.toFloat())
+            .setDuration(200)
+            .setInterpolator(AccelerateInterpolator())
+            .withEndAction { stopSelf() }
+            .start()
     }
 
     // --- Utilities ---
@@ -530,6 +557,15 @@ class OverlayService : Service() {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radiusDp.dp().toFloat()
+            setColor(color)
+        }
+    }
+
+    private fun createLeftRoundedBackground(color: Int, radiusDp: Int): GradientDrawable {
+        val r = radiusDp.dp().toFloat()
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r) // TL, TR, BR, BL
             setColor(color)
         }
     }
