@@ -171,8 +171,7 @@ class OverlayService : Service() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            minimumWidth = 200.dp()
-            setPadding(20.dp(), 20.dp(), 0, 20.dp())
+            setPadding(20.dp(), 20.dp(), 20.dp(), 20.dp())
             background = createLeftRoundedBackground(surfaceColor, 16)
             elevation = 8.dp().toFloat()
         }
@@ -244,7 +243,7 @@ class OverlayService : Service() {
                 setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
                 background = createRoundedBackground(bgColor, 8)
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     topMargin = 2.dp()
@@ -268,7 +267,10 @@ class OverlayService : Service() {
                 text = menuItem.label
                 textSize = 15f
                 setTextColor(fgColor)
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             })
 
             if (menuItem.hasSubMenu) {
@@ -277,7 +279,10 @@ class OverlayService : Service() {
                     textSize = 18f
                     setTextColor(fgColor)
                     gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(24.dp(), LinearLayout.LayoutParams.WRAP_CONTENT)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { marginStart = 6.dp() }
                 })
             }
 
@@ -308,7 +313,7 @@ class OverlayService : Service() {
                 setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
                 background = createRoundedBackground(bgColor, 8)
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     topMargin = 2.dp()
@@ -322,7 +327,10 @@ class OverlayService : Service() {
                     textSize = 14f
                     setTextColor(Color.YELLOW)
                     setTypeface(null, Typeface.ITALIC)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
                 })
             } else {
                 row.addView(TextView(this).apply {
@@ -340,7 +348,10 @@ class OverlayService : Service() {
                     text = keyCodeLabel(prefs.getInt(prefKey, defaultForKey(prefKey)))
                     textSize = 13f
                     setTextColor(fgColor)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
                 })
 
                 row.addView(TextView(this).apply {
@@ -368,7 +379,7 @@ class OverlayService : Service() {
             setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
             background = createRoundedBackground(backBg, 8)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = 2.dp()
