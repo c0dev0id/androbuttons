@@ -5,4 +5,13 @@
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
     </style>
+
+    <!-- Transparent, animation-free theme for MainActivity to suppress the
+         screen shake / app-switch animation when launched via hardware button -->
+    <style name="Theme.Androbuttons.Transparent" parent="Theme.Androbuttons">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>
