@@ -38,8 +38,8 @@ class OverlayService : Service() {
         private const val DEFAULT_KEY_DOWN = KeyEvent.KEYCODE_DPAD_DOWN
         private const val DEFAULT_KEY_LEFT = KeyEvent.KEYCODE_DPAD_LEFT
         private const val DEFAULT_KEY_RIGHT = KeyEvent.KEYCODE_DPAD_RIGHT
-        private const val DEFAULT_KEY_ENTER = KeyEvent.KEYCODE_DPAD_CENTER
-        private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_BACK
+        private const val DEFAULT_KEY_ENTER = KeyEvent.KEYCODE_ENTER
+        private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
     }
 
     private data class MenuItem(
@@ -269,6 +269,7 @@ class OverlayService : Service() {
                 })
             }
 
+            row.setOnClickListener { selectedIndex = index; activateSelected() }
             container.addView(row)
         }
     }
@@ -337,6 +338,7 @@ class OverlayService : Service() {
                 })
             }
 
+            row.setOnClickListener { selectedIndex = index; activateSelected() }
             container.addView(row)
         }
 
@@ -380,6 +382,7 @@ class OverlayService : Service() {
             setTextColor(backFg)
         })
 
+        backRow.setOnClickListener { selectedIndex = backIndex; activateSelected() }
         container.addView(backRow)
     }
 
