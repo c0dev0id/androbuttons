@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
@@ -61,6 +62,12 @@ class OverlayService : Service() {
     private var currentScreen = MenuScreen.MAIN
     private var selectedIndex = 0
     private var awaitingKeyForAction: String? = null
+
+    private val overlayWidth: Int
+        get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
+
+    private val overlayHeight: Int
+        get() = (resources.displayMetrics.heightPixels * 0.95f).toInt()
 
     private val mainMenuItems = listOf(
         MenuItem("settings", "Settings", "\u2699", hasSubMenu = true),
@@ -128,8 +135,8 @@ class OverlayService : Service() {
         removeOverlay()
         val view = buildMenuView()
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayWidth,
+            overlayHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
@@ -138,13 +145,12 @@ class OverlayService : Service() {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
         windowParams = params
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
-        view.translationX = view.measuredWidth.toFloat()
+        view.translationX = overlayWidth.toFloat()
         windowManager.addView(view, params)
         overlayView = view
+        view.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true } else false
+        }
         view.requestFocus()
         view.animate()
             .translationX(0f)
@@ -231,10 +237,11 @@ class OverlayService : Service() {
         items: List<MenuItem>,
         primaryColor: Int,
         onSurfaceColor: Int,
-        onPrimaryColor: Int
+        onPrimaryColor: Int,
+        indexOffset: Int = 0
     ) {
-        items.forEachIndexed { index, menuItem ->
-            val isSelected = index == selectedIndex
+        fun buildRow(menuItem: MenuItem, effectiveIndex: Int) {
+            val isSelected = effectiveIndex == selectedIndex
             val bgColor = if (isSelected) primaryColor else Color.TRANSPARENT
             val fgColor = if (isSelected) onPrimaryColor else onSurfaceColor
 
@@ -245,7 +252,7 @@ class OverlayService : Service() {
                 setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
                 background = createRoundedBackground(bgColor, 8)
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     topMargin = 2.dp()
@@ -288,9 +295,24 @@ class OverlayService : Service() {
                 })
             }
 
-            row.setOnClickListener { selectedIndex = index; activateSelected() }
+            row.setOnClickListener { selectedIndex = effectiveIndex; activateSelected() }
             container.addView(row)
         }
+
+        // Top group: all items except the last (Exit / Back)
+        items.dropLast(1).forEachIndexed { index, menuItem ->
+            buildRow(menuItem, index + indexOffset)
+        }
+
+        // Flexible spacer pushes the bottom item to the bottom of the panel
+        container.addView(Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f }
+        })
+
+        // Bottom item: always Exit or Back
+        buildRow(items.last(), items.size - 1 + indexOffset)
     }
 
     private fun buildKeyMappingMenu(
@@ -315,7 +337,7 @@ class OverlayService : Service() {
                 setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
                 background = createRoundedBackground(bgColor, 8)
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     topMargin = 2.dp()
@@ -367,6 +389,13 @@ class OverlayService : Service() {
             container.addView(row)
         }
 
+        // Flexible spacer pushes divider + Back to the bottom of the panel
+        container.addView(Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f }
+        })
+
         container.addView(buildDivider(dividerColor))
 
         // Back item
@@ -381,7 +410,7 @@ class OverlayService : Service() {
             setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
             background = createRoundedBackground(backBg, 8)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = 2.dp()
@@ -544,6 +573,9 @@ class OverlayService : Service() {
         val view = buildMenuView()
         windowManager.addView(view, params)
         overlayView = view
+        view.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true } else false
+        }
         view.requestFocus()
     }
 
