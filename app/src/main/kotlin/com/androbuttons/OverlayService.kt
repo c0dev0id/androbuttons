@@ -138,17 +138,19 @@ class OverlayService : Service() {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
         windowParams = params
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        view.translationX = view.measuredWidth.toFloat()
         windowManager.addView(view, params)
         overlayView = view
         view.requestFocus()
-        view.post {
-            view.translationX = view.width.toFloat()
-            view.animate()
-                .translationX(0f)
-                .setDuration(250)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-        }
+        view.animate()
+            .translationX(0f)
+            .setDuration(250)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
     }
 
     private fun removeOverlay() {
