@@ -569,10 +569,13 @@ class OverlayService : Service() {
 
     private fun refreshOverlay() {
         val params = windowParams ?: return showOverlay()
-        removeOverlay()
+        val oldView = overlayView
         val view = buildMenuView()
         windowManager.addView(view, params)
         overlayView = view
+        oldView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
         view.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true } else false
         }
