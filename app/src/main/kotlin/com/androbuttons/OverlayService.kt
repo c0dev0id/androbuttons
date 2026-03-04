@@ -149,7 +149,12 @@ class OverlayService : Service() {
             updateNowPlaying(metadata)
         }
         override fun onPlaybackStateChanged(state: PlaybackStateCompat?) {
-            if (state?.state == PlaybackStateCompat.STATE_PLAYING) {
+            val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
+            isPlaying = playing
+            controlViews[1]?.setImageResource(
+                if (playing) R.drawable.ic_pause else R.drawable.ic_play
+            )
+            if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
             } else {
@@ -291,7 +296,9 @@ class OverlayService : Service() {
         mediaController!!.registerCallback(mediaControllerCallback)
         updateNowPlaying(mediaController!!.metadata)
         val state = mediaController!!.playbackState
-        if (state?.state == PlaybackStateCompat.STATE_PLAYING) {
+        isPlaying = state?.state == PlaybackStateCompat.STATE_PLAYING
+        controlViews[1]?.setImageResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+        if (isPlaying) {
             seekHandler.post(seekUpdater)
         }
 
@@ -878,13 +885,12 @@ class OverlayService : Service() {
     }
 
     private fun activateMediaControl() {
-        if (mediaCtrlIndex == 1) {
-            isPlaying = !isPlaying
-            (controlViews[1])?.setImageResource(
-                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-            )
+        val tc = mediaController?.transportControls ?: return
+        when (mediaCtrlIndex) {
+            0 -> tc.skipToPrevious()
+            1 -> if (isPlaying) tc.pause() else tc.play()
+            2 -> tc.skipToNext()
         }
-        // Prev (0) and Next (2): reserved for media key dispatch in a future update
     }
 
     private fun refreshMediaControls() {
