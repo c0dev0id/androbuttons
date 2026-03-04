@@ -911,7 +911,7 @@ class OverlayService : Service() {
                             viewFlipper.outAnimation = slideOut(toLeft = true)
                             currentPane++
                             viewFlipper.showNext()
-                            refreshIndicator()
+                            refreshTitleBar()
                         }
                     } else {
                         // Swipe right → previous pane
@@ -920,7 +920,7 @@ class OverlayService : Service() {
                             viewFlipper.outAnimation = slideOut(toLeft = false)
                             currentPane--
                             viewFlipper.showPrevious()
-                            refreshIndicator()
+                            refreshTitleBar()
                         }
                     }
                     true
