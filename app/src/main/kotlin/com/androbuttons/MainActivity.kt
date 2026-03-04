@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
@@ -21,12 +20,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val overlayPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ ->
-        checkAndRequestPermissions()
-    }
-
-    private val nlsPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         checkAndRequestPermissions()
@@ -52,12 +45,6 @@ class MainActivity : AppCompatActivity() {
             overlayPermissionLauncher.launch(
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             )
-            return
-        }
-
-        // Stage 3: Notification Listener Service access
-        if (!NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)) {
-            nlsPermissionLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             return
         }
 

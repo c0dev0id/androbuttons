@@ -11,7 +11,6 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.session.MediaSessionManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -20,7 +19,6 @@ import android.os.SystemClock
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaControllerCompat
-import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.TypedValue
 import android.view.GestureDetector
@@ -60,6 +58,7 @@ class OverlayService : Service() {
         private const val DEFAULT_KEY_RIGHT = KeyEvent.KEYCODE_DPAD_RIGHT
         private const val DEFAULT_KEY_ENTER = KeyEvent.KEYCODE_ENTER
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
+        private const val TARGET_PLAYER_PKG = "de.codevoid.androsnd"
 
         var isRunning = false
     }
@@ -86,10 +85,6 @@ class OverlayService : Service() {
     private val trackList = mutableListOf<TrackItem>()
     private var mediaController: MediaControllerCompat? = null
     private var mediaBrowser: MediaBrowserCompat? = null
-    private lateinit var sessionManager: MediaSessionManager
-    private lateinit var nlsComponent: ComponentName
-    private var activeSessionsListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
-    private var nlsPermissionGranted = true
     private val seekHandler = Handler(Looper.getMainLooper())
     private var musicScrollView: ScrollView? = null
     private var trackListContainer: LinearLayout? = null
@@ -190,7 +185,11 @@ class OverlayService : Service() {
 
     private val browserConnectionCallback = object : MediaBrowserCompat.ConnectionCallback() {
         override fun onConnected() {
-            mediaBrowser?.subscribe(mediaBrowser!!.root, browserSubscriptionCallback)
+            val browser = mediaBrowser ?: return
+            mediaController?.unregisterCallback(mediaControllerCallback)
+            mediaController = MediaControllerCompat(this@OverlayService, browser.sessionToken)
+            mediaController!!.registerCallback(mediaControllerCallback, Handler(Looper.getMainLooper()))
+            browser.subscribe(browser.root, browserSubscriptionCallback)
         }
         override fun onConnectionFailed() {
             android.util.Log.w("androbuttons", "MediaBrowser connection failed: ${mediaBrowser?.serviceComponent}")
@@ -276,8 +275,6 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        sessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-        nlsComponent = ComponentName(this, MediaListenerService::class.java)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         showOverlay()
@@ -289,10 +286,6 @@ class OverlayService : Service() {
         seekHandler.removeCallbacks(seekUpdater)
         mediaController?.unregisterCallback(mediaControllerCallback)
         mediaBrowser?.disconnect()
-        activeSessionsListener?.let {
-            try { sessionManager.removeOnActiveSessionsChangedListener(it) } catch (_: Exception) {}
-        }
-        activeSessionsListener = null
         removeOverlay()
     }
 
@@ -361,40 +354,8 @@ class OverlayService : Service() {
     // --- Media connection ---
 
     private fun connectMedia() {
-        val listener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-            controllers?.firstOrNull()?.let { attachToSession(it) }
-        }
-        activeSessionsListener = listener
-        try {
-            sessionManager.addOnActiveSessionsChangedListener(listener, nlsComponent)
-            nlsPermissionGranted = true
-        } catch (_: SecurityException) {
-            nlsPermissionGranted = false
-            showNlsPermissionMessage()
-            return
-        }
-
-        val sessions = try {
-            sessionManager.getActiveSessions(nlsComponent)
-        } catch (_: SecurityException) {
-            nlsPermissionGranted = false
-            showNlsPermissionMessage()
-            return
-        }
-        sessions.firstOrNull()?.let { attachToSession(it) }
-    }
-
-    private fun attachToSession(session: android.media.session.MediaController) {
-        mediaController?.unregisterCallback(mediaControllerCallback)
+        val component = findMediaBrowserComponent(TARGET_PLAYER_PKG) ?: return
         mediaBrowser?.disconnect()
-        mediaBrowser = null
-
-        @Suppress("DEPRECATION")
-        val token = MediaSessionCompat.Token.fromToken(session.sessionToken)
-        mediaController = MediaControllerCompat(this, token)
-        mediaController!!.registerCallback(mediaControllerCallback, Handler(Looper.getMainLooper()))
-
-        val component = findMediaBrowserComponent(session.packageName) ?: return
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
         mediaBrowser!!.connect()
     }
@@ -853,25 +814,6 @@ class OverlayService : Service() {
                 scrollView.smoothScrollTo(0, rowBottom - visibleHeight)
             }
         }
-    }
-
-    private fun showNlsPermissionMessage() {
-        nowPlayingTitle?.text = "Permission needed"
-        nowPlayingArtist?.text = "Enable Notification Access"
-        val container = trackListContainer ?: return
-        container.removeAllViews()
-        trackRowViews.clear()
-        container.addView(TextView(this).apply {
-            text = "Go to Settings \u2192 Apps \u2192 Special app access \u2192 Notification access and enable Androbuttons."
-            textSize = 11f
-            setTextColor(secondaryText)
-            gravity = Gravity.CENTER
-            setPadding(8.dp(), 16.dp(), 8.dp(), 0)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        })
     }
 
     private fun updateNowPlaying(metadata: MediaMetadataCompat?) {
