@@ -100,20 +100,38 @@ class OverlayService : Service() {
     private var titleText: TextView? = null
     private var titleArrowRight: TextView? = null
 
-    // androsnd-inspired color palette
-    private val primaryColor   = Color.parseColor("#F57C00")   // orange
-    private val surfaceColor   = Color.parseColor("#CC2B2B2B") // ~80% dark gray
-    private val secondaryText  = Color.parseColor("#B0B0B0")
-    private val tertiaryText   = Color.parseColor("#808080")
-    private val inactiveBg     = Color.parseColor("#444444")
-    private val seekTrackColor = Color.parseColor("#555555")
-    private val selectedRow    = Color.parseColor("#80F57C00") // 50% orange
+    // Color palette
+    private val primaryColor    = Color.parseColor("#F57C00")   // orange
+    private val surfaceColor    = Color.parseColor("#FF2B2B2B") // opaque dark gray
+    private val headerColor     = Color.parseColor("#FF3D3D3D") // slightly lighter, for header bar
+    private val playerAreaColor = Color.parseColor("#FF1E1E1E") // darker, for player card
+    private val secondaryText   = Color.parseColor("#B0B0B0")
+    private val tertiaryText    = Color.parseColor("#808080")
+    private val inactiveBg      = Color.parseColor("#444444")
+    private val seekTrackColor  = Color.parseColor("#555555")
+    private val selectedRow     = Color.parseColor("#80F57C00") // 50% orange
+
+    private val statusBarHeight: Int
+        get() {
+            val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+            return if (id > 0) resources.getDimensionPixelSize(id) else 0
+        }
+
+    private val navBarHeight: Int
+        get() {
+            val id = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            return if (id > 0) resources.getDimensionPixelSize(id) else 0
+        }
 
     private val overlayWidth: Int
         get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
 
     private val overlayHeight: Int
-        get() = (resources.displayMetrics.heightPixels * 0.95f).toInt()
+        get() {
+            val screenH = resources.displayMetrics.heightPixels
+            val usableH = screenH - statusBarHeight - navBarHeight
+            return (usableH * 0.90f).toInt()
+        }
 
     // --- Data ---
 
@@ -231,9 +249,11 @@ class OverlayService : Service() {
             overlayHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
+            PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            // Shift y to center within usable area (between status bar and nav bar)
+            y = (statusBarHeight - navBarHeight) / 2
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
@@ -292,21 +312,13 @@ class OverlayService : Service() {
     private fun buildRootView(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
-            background = createLeftRoundedBackground(surfaceColor, 20)
+            // No padding — header bar fills edge-to-edge; content padding applied inside sections
+            background = createLeftRoundedBackground(surfaceColor, 16)
             elevation = 8.dp().toFloat()
+            clipToOutline = true
         }
 
         container.addView(buildTitleBar())
-
-        // 1dp divider
-        container.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
-            ).apply { bottomMargin = 8.dp() }
-            setBackgroundColor(seekTrackColor)
-        })
-
         container.addView(buildFlipperView())
 
         container.isFocusable = true
@@ -322,22 +334,24 @@ class OverlayService : Service() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(headerColor)
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 6.dp() }
+            )
         }
 
         titleArrowLeft = TextView(this).apply {
             text = "◀"
-            textSize = 12f
+            textSize = 13f
             setTextColor(if (currentPane > 0) primaryColor else inactiveBg)
-            setPadding(2.dp(), 4.dp(), 6.dp(), 4.dp())
+            setPadding(0, 0, 8.dp(), 0)
         }
 
         titleText = TextView(this).apply {
             text = paneNames[currentPane]
-            textSize = 13f
+            textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_HORIZONTAL
@@ -348,9 +362,9 @@ class OverlayService : Service() {
 
         titleArrowRight = TextView(this).apply {
             text = "▶"
-            textSize = 12f
+            textSize = 13f
             setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
-            setPadding(6.dp(), 4.dp(), 2.dp(), 4.dp())
+            setPadding(8.dp(), 0, 0, 0)
         }
 
         bar.addView(titleArrowLeft)
@@ -384,10 +398,22 @@ class OverlayService : Service() {
     private fun buildMusicPane(): LinearLayout {
         val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
+        }
+
+        // --- Player card ---
+        val playerCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            background = createRoundedBackground(playerAreaColor, 12)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 10.dp() }
         }
 
         // Now-playing row: cover art thumbnail + title/artist
@@ -404,10 +430,10 @@ class OverlayService : Service() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 6.dp().toFloat()
-                setColor(Color.argb(60, 255, 255, 255))
+                setColor(Color.argb(80, 255, 255, 255))
             }
             val size = 48.dp()
-            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 8.dp() }
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 10.dp() }
         }
         artBox.addView(TextView(this).apply {
             text = "\uD83C\uDFB5"
@@ -445,7 +471,7 @@ class OverlayService : Service() {
         metaCol.addView(nowPlayingTitle)
         metaCol.addView(nowPlayingArtist)
         nowPlayingRow.addView(metaCol)
-        pane.addView(nowPlayingRow)
+        playerCard.addView(nowPlayingRow)
 
         // Seekbar track
         val seekTrack = LinearLayout(this).apply {
@@ -467,7 +493,7 @@ class OverlayService : Service() {
                 weight = 1f
             }
         })
-        pane.addView(seekTrack)
+        playerCard.addView(seekTrack)
 
         // Time row
         val timeRow = LinearLayout(this).apply {
@@ -493,17 +519,24 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
         })
         timeRow.addView(timeRemaining)
-        pane.addView(timeRow)
+        playerCard.addView(timeRow)
 
         // Media controls: ⏮ ▶/⏸ ⏭
-        pane.addView(buildMediaControls())
+        playerCard.addView(buildMediaControls())
 
-        // Divider
-        pane.addView(View(this).apply {
+        pane.addView(playerCard)
+
+        // --- Playlist section ---
+        pane.addView(TextView(this).apply {
+            text = "PLAYLIST"
+            textSize = 10f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(tertiaryText)
+            setPadding(2.dp(), 0, 2.dp(), 4.dp())
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
-            ).apply { topMargin = 8.dp(); bottomMargin = 8.dp() }
-            setBackgroundColor(seekTrackColor)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         })
 
         // Track list in a ScrollView
@@ -578,6 +611,7 @@ class OverlayService : Service() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT
