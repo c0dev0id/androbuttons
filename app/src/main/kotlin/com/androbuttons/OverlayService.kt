@@ -19,10 +19,14 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
+import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.TranslateAnimation
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
+import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
 
 class OverlayService : Service() {
@@ -45,54 +49,34 @@ class OverlayService : Service() {
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
     }
 
-    private data class MenuItem(
-        val id: String,
-        val label: String,
-        val icon: String,
-        val hasSubMenu: Boolean = false
-    )
-
-    private enum class MenuScreen { MAIN, SETTINGS, KEY_MAPPING, DASHBOARD, CREATE_NOTE }
-
     private lateinit var windowManager: WindowManager
     private lateinit var prefs: SharedPreferences
     private var overlayView: View? = null
     private var windowParams: WindowManager.LayoutParams? = null
 
-    private var currentScreen = MenuScreen.MAIN
-    private var selectedIndex = 0
-    private var awaitingKeyForAction: String? = null
+    // Pane state
+    private var currentPane = 0
+    private val paneCount = 3
+
+    // Media player state
+    private var mediaCtrlIndex = 0   // 0=Prev, 1=Play/Pause, 2=Next
+    private var isPlaying = false
+
+    // Stored view references for direct updates (no full rebuild)
+    private lateinit var viewFlipper: ViewFlipper
+    private val controlViews = arrayOfNulls<TextView>(3)
+    private val indicatorViews = arrayOfNulls<TextView>(3)
+
+    private val primaryColor = Color.parseColor("#1565C0")
+    private val surfaceColor = Color.argb(230, 30, 30, 30)
+    private val onSurfaceColor = Color.WHITE
+    private val onPrimaryColor = Color.WHITE
 
     private val overlayWidth: Int
         get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
 
     private val overlayHeight: Int
         get() = (resources.displayMetrics.heightPixels * 0.95f).toInt()
-
-    private val mainMenuItems = listOf(
-        MenuItem("settings", "Settings", "\u2699", hasSubMenu = true),
-        MenuItem("dashboard", "Dashboard", "\uD83D\uDCCA", hasSubMenu = true),
-        MenuItem("create_note", "Create Note", "\uD83D\uDCDD", hasSubMenu = true),
-        MenuItem("exit", "Exit", "\u2716")
-    )
-
-    private val settingsMenuItems = listOf(
-        MenuItem("key_mapping", "Key Mapping", "\u2328", hasSubMenu = true),
-        MenuItem("back", "Back", "\u2190")
-    )
-
-    private val stubMenuItems = listOf(
-        MenuItem("back", "Back", "\u2190")
-    )
-
-    private val keyMappingActions = listOf(
-        Pair(KEY_UP, "Up"),
-        Pair(KEY_DOWN, "Down"),
-        Pair(KEY_LEFT, "Left"),
-        Pair(KEY_RIGHT, "Right"),
-        Pair(KEY_ENTER, "Enter"),
-        Pair(KEY_CANCEL, "Cancel")
-    )
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -109,6 +93,8 @@ class OverlayService : Service() {
         super.onDestroy()
         removeOverlay()
     }
+
+    // --- Notification ---
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -131,9 +117,11 @@ class OverlayService : Service() {
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
 
+    // --- Overlay lifecycle ---
+
     private fun showOverlay() {
         removeOverlay()
-        val view = buildMenuView()
+        val view = buildRootView()
         val params = WindowManager.LayoutParams(
             overlayWidth,
             overlayHeight,
@@ -170,36 +158,16 @@ class OverlayService : Service() {
 
     // --- UI Building ---
 
-    private fun buildMenuView(): View {
-        val surfaceColor = Color.argb(230, 30, 30, 30)
-        val onSurfaceColor = Color.WHITE
-        val primaryColor = Color.parseColor("#1565C0")
-        val onPrimaryColor = Color.WHITE
-        val dividerColor = Color.argb(50, 255, 255, 255)
-
+    private fun buildRootView(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20.dp(), 20.dp(), 20.dp(), 20.dp())
+            setPadding(12.dp(), 16.dp(), 12.dp(), 12.dp())
             background = createLeftRoundedBackground(surfaceColor, 16)
             elevation = 8.dp().toFloat()
         }
 
-        val titleText = when (currentScreen) {
-            MenuScreen.MAIN -> getString(R.string.menu_title)
-            MenuScreen.SETTINGS -> getString(R.string.menu_settings)
-            MenuScreen.KEY_MAPPING -> getString(R.string.menu_key_mapping)
-            MenuScreen.DASHBOARD -> getString(R.string.menu_dashboard)
-            MenuScreen.CREATE_NOTE -> getString(R.string.menu_create_note)
-        }
-        container.addView(buildTitleView(titleText, onSurfaceColor))
-        container.addView(buildDivider(dividerColor))
-
-        when (currentScreen) {
-            MenuScreen.MAIN -> buildStandardMenu(container, mainMenuItems, primaryColor, onSurfaceColor, onPrimaryColor)
-            MenuScreen.SETTINGS -> buildStandardMenu(container, settingsMenuItems, primaryColor, onSurfaceColor, onPrimaryColor)
-            MenuScreen.KEY_MAPPING -> buildKeyMappingMenu(container, primaryColor, onSurfaceColor, onPrimaryColor, dividerColor)
-            MenuScreen.DASHBOARD, MenuScreen.CREATE_NOTE -> buildStubMenu(container, primaryColor, onSurfaceColor, onPrimaryColor)
-        }
+        container.addView(buildFlipperView())
+        container.addView(buildPaneIndicator())
 
         container.isFocusable = true
         container.isFocusableInTouchMode = true
@@ -210,377 +178,320 @@ class OverlayService : Service() {
         return container
     }
 
-    private fun buildTitleView(title: String, textColor: Int): TextView {
-        return TextView(this).apply {
-            text = title
-            setTextColor(textColor)
-            textSize = 18f
+    private fun buildFlipperView(): ViewFlipper {
+        viewFlipper = ViewFlipper(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f }
+        }
+        viewFlipper.addView(buildMediaPlayerPane())
+        viewFlipper.addView(buildEmptyPane("Pane 2"))
+        viewFlipper.addView(buildEmptyPane("Pane 3"))
+        viewFlipper.displayedChild = currentPane
+        return viewFlipper
+    }
+
+    private fun buildMediaPlayerPane(): LinearLayout {
+        val pane = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // "Now Playing" header label
+        pane.addView(TextView(this).apply {
+            text = "\u266A  Now Playing"
+            textSize = 11f
+            setTextColor(Color.argb(150, 255, 255, 255))
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        })
+
+        // Album art square (fills remaining height via weight)
+        val albumArt = FrameLayout(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(Color.argb(60, 255, 255, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f; bottomMargin = 12.dp() }
+        }
+        albumArt.addView(TextView(this).apply {
+            text = "\uD83C\uDFB5"  // 🎵
+            textSize = 40f
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        })
+        pane.addView(albumArt)
+
+        // Song title
+        pane.addView(TextView(this).apply {
+            text = "Not Playing"
+            textSize = 14f
             setTypeface(null, Typeface.BOLD)
-            setPadding(4.dp(), 0, 0, 8.dp())
-        }
-    }
-
-    private fun buildDivider(color: Int): View {
-        return View(this).apply {
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_HORIZONTAL
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            maxLines = 1
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
-            ).apply {
-                topMargin = 4.dp()
-                bottomMargin = 8.dp()
-            }
-            setBackgroundColor(color)
-        }
-    }
-
-    private fun buildStandardMenu(
-        container: LinearLayout,
-        items: List<MenuItem>,
-        primaryColor: Int,
-        onSurfaceColor: Int,
-        onPrimaryColor: Int,
-        indexOffset: Int = 0
-    ) {
-        fun buildRow(menuItem: MenuItem, effectiveIndex: Int) {
-            val isSelected = effectiveIndex == selectedIndex
-            val bgColor = if (isSelected) primaryColor else Color.TRANSPARENT
-            val fgColor = if (isSelected) onPrimaryColor else onSurfaceColor
-
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = 44.dp()
-                setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
-                background = createRoundedBackground(bgColor, 8)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 2.dp()
-                    bottomMargin = 2.dp()
-                }
-            }
-
-            row.addView(TextView(this).apply {
-                text = menuItem.icon
-                textSize = 16f
-                setTextColor(fgColor)
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(28.dp(), LinearLayout.LayoutParams.WRAP_CONTENT)
-            })
-
-            row.addView(Space(this).apply {
-                layoutParams = LinearLayout.LayoutParams(8.dp(), 0)
-            })
-
-            row.addView(TextView(this).apply {
-                text = menuItem.label
-                textSize = 15f
-                setTextColor(fgColor)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            })
-
-            if (menuItem.hasSubMenu) {
-                row.addView(TextView(this).apply {
-                    text = "\u203A"
-                    textSize = 18f
-                    setTextColor(fgColor)
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { marginStart = 6.dp() }
-                })
-            }
-
-            row.setOnClickListener { selectedIndex = effectiveIndex; activateSelected() }
-            container.addView(row)
-        }
-
-        // Top group: all items except the last (Exit / Back)
-        items.dropLast(1).forEachIndexed { index, menuItem ->
-            buildRow(menuItem, index + indexOffset)
-        }
-
-        // Flexible spacer pushes the bottom item to the bottom of the panel
-        container.addView(Space(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0
-            ).apply { weight = 1f }
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 2.dp() }
         })
 
-        // Bottom item: always Exit or Back
-        buildRow(items.last(), items.size - 1 + indexOffset)
-    }
-
-    private fun buildKeyMappingMenu(
-        container: LinearLayout,
-        primaryColor: Int,
-        onSurfaceColor: Int,
-        onPrimaryColor: Int,
-        dividerColor: Int
-    ) {
-        val backIndex = keyMappingActions.size
-
-        keyMappingActions.forEachIndexed { index, (prefKey, label) ->
-            val isSelected = index == selectedIndex
-            val bgColor = if (isSelected) primaryColor else Color.TRANSPARENT
-            val fgColor = if (isSelected) onPrimaryColor else onSurfaceColor
-            val isDetecting = awaitingKeyForAction == prefKey
-
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = 44.dp()
-                setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
-                background = createRoundedBackground(bgColor, 8)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 2.dp()
-                    bottomMargin = 2.dp()
-                }
-            }
-
-            if (isDetecting) {
-                row.addView(TextView(this).apply {
-                    text = "$label:  ${getString(R.string.key_mapping_prompt)}"
-                    textSize = 14f
-                    setTextColor(Color.YELLOW)
-                    setTypeface(null, Typeface.ITALIC)
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                })
-            } else {
-                row.addView(TextView(this).apply {
-                    text = "$label:"
-                    textSize = 14f
-                    setTextColor(fgColor)
-                    setTypeface(null, Typeface.BOLD)
-                })
-
-                row.addView(Space(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(8.dp(), 0)
-                })
-
-                row.addView(TextView(this).apply {
-                    text = keyCodeLabel(prefs.getInt(prefKey, defaultForKey(prefKey)))
-                    textSize = 13f
-                    setTextColor(fgColor)
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                })
-
-                row.addView(TextView(this).apply {
-                    text = "[${getString(R.string.menu_detect)}]"
-                    textSize = 12f
-                    setTextColor(if (isSelected) onPrimaryColor else Color.argb(180, 255, 255, 255))
-                })
-            }
-
-            row.setOnClickListener { selectedIndex = index; activateSelected() }
-            container.addView(row)
-        }
-
-        // Flexible spacer pushes divider + Back to the bottom of the panel
-        container.addView(Space(this).apply {
+        // Artist name
+        pane.addView(TextView(this).apply {
+            text = "\u2014"   // em dash as placeholder
+            textSize = 12f
+            setTextColor(Color.argb(160, 255, 255, 255))
+            gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0
-            ).apply { weight = 1f }
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 10.dp() }
         })
 
-        container.addView(buildDivider(dividerColor))
+        // Progress track (static visual, no actual seek)
+        val progressTrack = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 4.dp()
+            ).apply { bottomMargin = 4.dp() }
+            background = createRoundedBackground(Color.argb(60, 255, 255, 255), 2)
+        }
+        progressTrack.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT)
+                .apply { weight = 0f }
+            background = createRoundedBackground(primaryColor, 2)
+        })
+        pane.addView(progressTrack)
 
-        // Back item
-        val isBackSelected = selectedIndex == backIndex
-        val backBg = if (isBackSelected) primaryColor else Color.TRANSPARENT
-        val backFg = if (isBackSelected) onPrimaryColor else onSurfaceColor
-
-        val backRow = LinearLayout(this).apply {
+        // Time row: 0:00 ··· 0:00
+        val timeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = 44.dp()
-            setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
-            background = createRoundedBackground(backBg, 8)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 10.dp() }
+        }
+        timeRow.addView(TextView(this).apply {
+            text = "0:00"
+            textSize = 10f
+            setTextColor(Color.argb(130, 255, 255, 255))
+        })
+        timeRow.addView(Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
+        })
+        timeRow.addView(TextView(this).apply {
+            text = "0:00"
+            textSize = 10f
+            setTextColor(Color.argb(130, 255, 255, 255))
+        })
+        pane.addView(timeRow)
+
+        // Playback controls: ⏮  ▶/⏸  ⏭
+        pane.addView(buildMediaControls())
+
+        return pane
+    }
+
+    private fun buildMediaControls(): LinearLayout {
+        val icons = listOf("\u23EE", if (isPlaying) "\u23F8" else "\u25B6", "\u23ED")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        icons.forEachIndexed { i, icon ->
+            val isSelected = i == mediaCtrlIndex
+            val btn = TextView(this).apply {
+                text = icon
+                textSize = 26f
+                setTextColor(if (isSelected) onPrimaryColor else onSurfaceColor)
+                gravity = Gravity.CENTER
+                minimumHeight = 44.dp()
+                background = if (isSelected) createRoundedBackground(primaryColor, 8) else null
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    weight = 1f
+                    marginStart = 4.dp()
+                    marginEnd = 4.dp()
+                }
+            }
+            controlViews[i] = btn
+            row.addView(btn)
+        }
+        return row
+    }
+
+    private fun buildEmptyPane(label: String): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            addView(TextView(this@OverlayService).apply {
+                text = label
+                textSize = 14f
+                setTextColor(Color.argb(128, 255, 255, 255))
+                gravity = Gravity.CENTER
+            })
+        }
+    }
+
+    private fun buildPaneIndicator(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = 2.dp()
-                bottomMargin = 2.dp()
+                topMargin = 8.dp()
+                bottomMargin = 4.dp()
             }
         }
-
-        backRow.addView(TextView(this).apply {
-            text = "\u2190"
-            textSize = 16f
-            setTextColor(backFg)
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(28.dp(), LinearLayout.LayoutParams.WRAP_CONTENT)
-        })
-
-        backRow.addView(Space(this).apply {
-            layoutParams = LinearLayout.LayoutParams(8.dp(), 0)
-        })
-
-        backRow.addView(TextView(this).apply {
-            text = getString(R.string.menu_back)
-            textSize = 15f
-            setTextColor(backFg)
-        })
-
-        backRow.setOnClickListener { selectedIndex = backIndex; activateSelected() }
-        container.addView(backRow)
+        for (i in 0 until paneCount) {
+            val isActive = i == currentPane
+            val dot = TextView(this).apply {
+                text = if (isActive) "\u25CF" else "\u25CB"   // ● or ○
+                textSize = 10f
+                setTextColor(if (isActive) Color.WHITE else Color.argb(100, 255, 255, 255))
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginStart = 8.dp()
+                    marginEnd = 8.dp()
+                }
+            }
+            indicatorViews[i] = dot
+            row.addView(dot)
+        }
+        return row
     }
 
-    private fun buildStubMenu(
-        container: LinearLayout,
-        primaryColor: Int,
-        onSurfaceColor: Int,
-        onPrimaryColor: Int
-    ) {
-        container.addView(TextView(this).apply {
-            text = getString(R.string.stub_coming_soon)
-            textSize = 14f
-            setTextColor(Color.argb(128, 255, 255, 255))
-            setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
-            gravity = Gravity.CENTER
-        })
-
-        buildStandardMenu(container, stubMenuItems, primaryColor, onSurfaceColor, onPrimaryColor)
-    }
-
-    // --- Navigation Logic ---
+    // --- Navigation ---
 
     private fun handleKey(keyCode: Int): Boolean {
-        if (awaitingKeyForAction != null) {
-            val action = awaitingKeyForAction!!
-            prefs.edit().putInt(action, keyCode).apply()
-            awaitingKeyForAction = null
-            refreshOverlay()
-            return true
-        }
-
-        val upKey = prefs.getInt(KEY_UP, DEFAULT_KEY_UP)
-        val downKey = prefs.getInt(KEY_DOWN, DEFAULT_KEY_DOWN)
+        val rightKey = prefs.getInt(KEY_RIGHT, DEFAULT_KEY_RIGHT)
+        val leftKey  = prefs.getInt(KEY_LEFT,  DEFAULT_KEY_LEFT)
+        val upKey    = prefs.getInt(KEY_UP,    DEFAULT_KEY_UP)
+        val downKey  = prefs.getInt(KEY_DOWN,  DEFAULT_KEY_DOWN)
         val enterKey = prefs.getInt(KEY_ENTER, DEFAULT_KEY_ENTER)
-        val cancelKey = prefs.getInt(KEY_CANCEL, DEFAULT_KEY_CANCEL)
-
-        val itemCount = when (currentScreen) {
-            MenuScreen.MAIN -> mainMenuItems.size
-            MenuScreen.SETTINGS -> settingsMenuItems.size
-            MenuScreen.KEY_MAPPING -> keyMappingActions.size + 1
-            MenuScreen.DASHBOARD, MenuScreen.CREATE_NOTE -> stubMenuItems.size
-        }
+        val cancelKey= prefs.getInt(KEY_CANCEL,DEFAULT_KEY_CANCEL)
 
         return when (keyCode) {
+            rightKey -> {
+                if (currentPane < paneCount - 1) {
+                    viewFlipper.inAnimation  = slideIn(fromRight = true)
+                    viewFlipper.outAnimation = slideOut(toLeft = true)
+                    currentPane++
+                    viewFlipper.showNext()
+                    refreshIndicator()
+                }
+                true
+            }
+            leftKey -> {
+                if (currentPane > 0) {
+                    viewFlipper.inAnimation  = slideIn(fromRight = false)
+                    viewFlipper.outAnimation = slideOut(toLeft = false)
+                    currentPane--
+                    viewFlipper.showPrevious()
+                    refreshIndicator()
+                }
+                true
+            }
             upKey -> {
-                selectedIndex = (selectedIndex - 1 + itemCount) % itemCount
-                refreshOverlay()
+                if (currentPane == 0) {
+                    mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
+                    refreshMediaControls()
+                }
                 true
             }
             downKey -> {
-                selectedIndex = (selectedIndex + 1) % itemCount
-                refreshOverlay()
+                if (currentPane == 0) {
+                    mediaCtrlIndex = (mediaCtrlIndex + 1) % 3
+                    refreshMediaControls()
+                }
                 true
             }
             enterKey -> {
-                activateSelected()
+                if (currentPane == 0) activateMediaControl()
                 true
             }
             cancelKey -> {
-                goBack()
+                exitWithAnimation()
                 true
             }
             else -> false
         }
     }
 
-    private fun activateSelected() {
-        when (currentScreen) {
-            MenuScreen.MAIN -> {
-                when (mainMenuItems[selectedIndex].id) {
-                    "settings" -> navigateTo(MenuScreen.SETTINGS)
-                    "dashboard" -> navigateTo(MenuScreen.DASHBOARD)
-                    "create_note" -> navigateTo(MenuScreen.CREATE_NOTE)
-                    "exit" -> exitWithAnimation()
-                }
-            }
-            MenuScreen.SETTINGS -> {
-                when (settingsMenuItems[selectedIndex].id) {
-                    "key_mapping" -> navigateTo(MenuScreen.KEY_MAPPING)
-                    "back" -> goBack()
-                }
-            }
-            MenuScreen.KEY_MAPPING -> {
-                if (selectedIndex < keyMappingActions.size) {
-                    awaitingKeyForAction = keyMappingActions[selectedIndex].first
-                    refreshOverlay()
-                } else {
-                    goBack()
-                }
-            }
-            MenuScreen.DASHBOARD, MenuScreen.CREATE_NOTE -> {
-                if (stubMenuItems[selectedIndex].id == "back") {
-                    goBack()
-                }
-            }
+    private fun activateMediaControl() {
+        if (mediaCtrlIndex == 1) {
+            isPlaying = !isPlaying
+            controlViews[1]?.text = if (isPlaying) "\u23F8" else "\u25B6"
+        }
+        // Prev (0) and Next (2): reserved for media key dispatch in a future update
+    }
+
+    private fun refreshMediaControls() {
+        controlViews.forEachIndexed { i, view ->
+            val isSelected = i == mediaCtrlIndex
+            view?.setTextColor(if (isSelected) onPrimaryColor else onSurfaceColor)
+            view?.background = if (isSelected) createRoundedBackground(primaryColor, 8) else null
         }
     }
 
-    private fun navigateTo(screen: MenuScreen) {
-        currentScreen = screen
-        selectedIndex = 0
-        refreshOverlay()
-    }
-
-    private fun goBack() {
-        when (currentScreen) {
-            MenuScreen.MAIN -> { /* already at root */ }
-            MenuScreen.SETTINGS -> {
-                currentScreen = MenuScreen.MAIN
-                selectedIndex = 0
-                refreshOverlay()
-            }
-            MenuScreen.KEY_MAPPING -> {
-                currentScreen = MenuScreen.SETTINGS
-                selectedIndex = 0
-                refreshOverlay()
-            }
-            MenuScreen.DASHBOARD -> {
-                currentScreen = MenuScreen.MAIN
-                selectedIndex = 1
-                refreshOverlay()
-            }
-            MenuScreen.CREATE_NOTE -> {
-                currentScreen = MenuScreen.MAIN
-                selectedIndex = 2
-                refreshOverlay()
-            }
+    private fun refreshIndicator() {
+        indicatorViews.forEachIndexed { i, view ->
+            val isActive = i == currentPane
+            view?.text = if (isActive) "\u25CF" else "\u25CB"
+            view?.setTextColor(if (isActive) Color.WHITE else Color.argb(100, 255, 255, 255))
         }
     }
 
-    private fun refreshOverlay() {
-        val params = windowParams ?: return showOverlay()
-        val oldView = overlayView
-        val view = buildMenuView()
-        windowManager.addView(view, params)
-        overlayView = view
-        oldView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
+    // --- Animation helpers ---
+
+    private fun slideIn(fromRight: Boolean): TranslateAnimation =
+        TranslateAnimation(
+            Animation.RELATIVE_TO_PARENT, if (fromRight) 1f else -1f,
+            Animation.RELATIVE_TO_PARENT, 0f,
+            Animation.RELATIVE_TO_PARENT, 0f,
+            Animation.RELATIVE_TO_PARENT, 0f
+        ).apply {
+            duration = 220
+            interpolator = DecelerateInterpolator()
         }
-        view.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true } else false
+
+    private fun slideOut(toLeft: Boolean): TranslateAnimation =
+        TranslateAnimation(
+            Animation.RELATIVE_TO_PARENT, 0f,
+            Animation.RELATIVE_TO_PARENT, if (toLeft) -1f else 1f,
+            Animation.RELATIVE_TO_PARENT, 0f,
+            Animation.RELATIVE_TO_PARENT, 0f
+        ).apply {
+            duration = 220
+            interpolator = AccelerateInterpolator()
         }
-        view.requestFocus()
-    }
 
     private fun exitWithAnimation() {
         val view = overlayView ?: run { stopSelf(); return }
@@ -613,21 +524,8 @@ class OverlayService : Service() {
         val r = radiusDp.dp().toFloat()
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r) // TL, TR, BR, BL
+            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
             setColor(color)
         }
     }
-
-    private fun defaultForKey(prefKey: String): Int = when (prefKey) {
-        KEY_UP -> DEFAULT_KEY_UP
-        KEY_DOWN -> DEFAULT_KEY_DOWN
-        KEY_LEFT -> DEFAULT_KEY_LEFT
-        KEY_RIGHT -> DEFAULT_KEY_RIGHT
-        KEY_ENTER -> DEFAULT_KEY_ENTER
-        KEY_CANCEL -> DEFAULT_KEY_CANCEL
-        else -> KeyEvent.KEYCODE_UNKNOWN
-    }
-
-    private fun keyCodeLabel(keyCode: Int): String =
-        KeyEvent.keyCodeToString(keyCode).removePrefix("KEYCODE_").replace("_", " ")
 }
