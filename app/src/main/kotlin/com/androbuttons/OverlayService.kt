@@ -332,6 +332,7 @@ class OverlayService : Service() {
             PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            x = 20.dp()
             // Shift y to center within usable area (between status bar and nav bar)
             y = (statusBarHeight - navBarHeight) / 2
         }
@@ -416,13 +417,9 @@ class OverlayService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // No padding — header bar fills edge-to-edge; content padding applied inside sections
-            background = createLeftRoundedBackground(surfaceColor, 16, strokeWidthDp = 2, strokeColor = primaryColor)
-            elevation = 16.dp().toFloat()
+            background = createRoundedBackground(surfaceColor, 16)
+            elevation = 8.dp().toFloat()
             clipToOutline = true
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                outlineSpotShadowColor    = Color.argb(0x80, 0xF5, 0x7C, 0x00)
-                outlineAmbientShadowColor = Color.argb(0x40, 0xF5, 0x7C, 0x00)
-            }
         }
 
         container.addView(buildTitleBar())
