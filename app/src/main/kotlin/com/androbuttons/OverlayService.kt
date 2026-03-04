@@ -3,6 +3,7 @@ package com.androbuttons
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -10,8 +11,16 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.session.MediaSessionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaControllerCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -24,6 +33,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.TranslateAnimation
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
 import android.widget.ViewFlipper
@@ -58,9 +68,24 @@ class OverlayService : Service() {
     private var currentPane = 0
     private val paneCount = 3
 
-    // Media player state
+    // Media player state (pane 0)
     private var mediaCtrlIndex = 0   // 0=Prev, 1=Play/Pause, 2=Next
     private var isPlaying = false
+
+    // Music pane state (pane 1)
+    private var musicListIndex = 0
+    private val trackList = mutableListOf<TrackItem>()
+    private var mediaController: MediaControllerCompat? = null
+    private var mediaBrowser: MediaBrowserCompat? = null
+    private val seekHandler = Handler(Looper.getMainLooper())
+    private var musicScrollView: ScrollView? = null
+    private var trackListContainer: LinearLayout? = null
+    private val trackRowViews = mutableListOf<LinearLayout>()
+    private var seekBarFill: View? = null
+    private var nowPlayingTitle: TextView? = null
+    private var nowPlayingArtist: TextView? = null
+    private var timeElapsed: TextView? = null
+    private var timeRemaining: TextView? = null
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
@@ -78,6 +103,70 @@ class OverlayService : Service() {
     private val overlayHeight: Int
         get() = (resources.displayMetrics.heightPixels * 0.95f).toInt()
 
+    // --- Data ---
+
+    private data class TrackItem(
+        val mediaId: String,
+        val title: String,
+        val artist: String,
+        val duration: Long   // ms
+    )
+
+    // --- Media callbacks ---
+
+    private val mediaControllerCallback = object : MediaControllerCompat.Callback() {
+        override fun onMetadataChanged(metadata: MediaMetadataCompat?) {
+            updateNowPlaying(metadata)
+        }
+        override fun onPlaybackStateChanged(state: PlaybackStateCompat?) {
+            if (state?.state == PlaybackStateCompat.STATE_PLAYING) {
+                seekHandler.removeCallbacks(seekUpdater)
+                seekHandler.post(seekUpdater)
+            } else {
+                seekHandler.removeCallbacks(seekUpdater)
+                updateSeekBar(state?.position ?: 0L,
+                    mediaController?.metadata?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L)
+            }
+        }
+    }
+
+    private val browserConnectionCallback = object : MediaBrowserCompat.ConnectionCallback() {
+        override fun onConnected() {
+            mediaBrowser?.subscribe(mediaBrowser!!.root, browserSubscriptionCallback)
+        }
+    }
+
+    private val browserSubscriptionCallback = object : MediaBrowserCompat.SubscriptionCallback() {
+        override fun onChildrenLoaded(
+            parentId: String,
+            children: List<MediaBrowserCompat.MediaItem>
+        ) {
+            trackList.clear()
+            children.forEach { item ->
+                val desc = item.description
+                trackList.add(TrackItem(
+                    mediaId = item.mediaId ?: "",
+                    title = desc.title?.toString() ?: "Unknown",
+                    artist = desc.subtitle?.toString() ?: "",
+                    duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
+                ))
+            }
+            musicListIndex = 0
+            rebuildTrackList()
+        }
+    }
+
+    private val seekUpdater = object : Runnable {
+        override fun run() {
+            val state = mediaController?.playbackState ?: return
+            val pos = state.position
+            val dur = mediaController?.metadata
+                ?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
+            updateSeekBar(pos, dur)
+            seekHandler.postDelayed(this, 500)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -91,6 +180,9 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        seekHandler.removeCallbacks(seekUpdater)
+        mediaController?.unregisterCallback(mediaControllerCallback)
+        mediaBrowser?.disconnect()
         removeOverlay()
     }
 
@@ -145,6 +237,7 @@ class OverlayService : Service() {
             .setDuration(250)
             .setInterpolator(DecelerateInterpolator())
             .start()
+        connectMedia()
     }
 
     private fun removeOverlay() {
@@ -154,6 +247,36 @@ class OverlayService : Service() {
             } catch (_: Exception) {}
             overlayView = null
         }
+    }
+
+    // --- Media connection ---
+
+    private fun connectMedia() {
+        val sessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        val cn = ComponentName(this, MediaListenerService::class.java)
+        val sessions = try { sessionManager.getActiveSessions(cn) } catch (_: Exception) { emptyList() }
+        val session = sessions.firstOrNull() ?: return
+
+        @Suppress("DEPRECATION")
+        val token = MediaSessionCompat.Token.fromToken(session.sessionToken)
+        mediaController = MediaControllerCompat(this, token)
+        mediaController!!.registerCallback(mediaControllerCallback)
+        updateNowPlaying(mediaController!!.metadata)
+        val state = mediaController!!.playbackState
+        if (state?.state == PlaybackStateCompat.STATE_PLAYING) {
+            seekHandler.post(seekUpdater)
+        }
+
+        // Attempt MediaBrowser connection to browse tracks
+        val pkg = session.packageName
+        val browserIntent = Intent("android.media.browse.MediaBrowserService")
+        val resolveInfos = packageManager.queryIntentServices(browserIntent, 0)
+        val component = resolveInfos
+            .firstOrNull { it.serviceInfo.packageName == pkg }
+            ?.let { ComponentName(it.serviceInfo.packageName, it.serviceInfo.name) }
+            ?: return
+        mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
+        mediaBrowser!!.connect()
     }
 
     // --- UI Building ---
@@ -185,7 +308,7 @@ class OverlayService : Service() {
             ).apply { weight = 1f }
         }
         viewFlipper.addView(buildMediaPlayerPane())
-        viewFlipper.addView(buildEmptyPane("Pane 2"))
+        viewFlipper.addView(buildMusicPane())
         viewFlipper.addView(buildEmptyPane("Pane 3"))
         viewFlipper.displayedChild = currentPane
         return viewFlipper
@@ -307,6 +430,165 @@ class OverlayService : Service() {
         return pane
     }
 
+    private fun buildMusicPane(): LinearLayout {
+        val pane = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // Header
+        pane.addView(TextView(this).apply {
+            text = "\u266A  Music"
+            textSize = 11f
+            setTextColor(Color.argb(150, 255, 255, 255))
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        })
+
+        // Now-playing row: cover art + title/artist
+        val nowPlayingRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        }
+
+        val artBox = FrameLayout(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 6.dp().toFloat()
+                setColor(Color.argb(60, 255, 255, 255))
+            }
+            val size = 48.dp()
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 8.dp() }
+        }
+        artBox.addView(TextView(this).apply {
+            text = "\uD83C\uDFB5"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        })
+        nowPlayingRow.addView(artBox)
+
+        val metaCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                weight = 1f
+            }
+        }
+        nowPlayingTitle = TextView(this).apply {
+            text = "Not Playing"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        nowPlayingArtist = TextView(this).apply {
+            text = "\u2014"
+            textSize = 11f
+            setTextColor(Color.argb(160, 255, 255, 255))
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        metaCol.addView(nowPlayingTitle)
+        metaCol.addView(nowPlayingArtist)
+        nowPlayingRow.addView(metaCol)
+        pane.addView(nowPlayingRow)
+
+        // Seekbar track
+        val seekTrack = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 4.dp()
+            ).apply { bottomMargin = 4.dp() }
+            background = createRoundedBackground(Color.argb(60, 255, 255, 255), 2)
+        }
+        seekBarFill = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                weight = 0f
+            }
+            background = createRoundedBackground(primaryColor, 2)
+        }
+        seekTrack.addView(seekBarFill)
+        // Spacer to absorb remaining width
+        seekTrack.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                weight = 1f
+            }
+        })
+        pane.addView(seekTrack)
+
+        // Time row
+        val timeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        }
+        timeElapsed = TextView(this).apply {
+            text = "0:00"
+            textSize = 10f
+            setTextColor(Color.argb(130, 255, 255, 255))
+        }
+        timeRemaining = TextView(this).apply {
+            text = "0:00"
+            textSize = 10f
+            setTextColor(Color.argb(130, 255, 255, 255))
+        }
+        timeRow.addView(timeElapsed)
+        timeRow.addView(Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
+        })
+        timeRow.addView(timeRemaining)
+        pane.addView(timeRow)
+
+        // Track list in a ScrollView
+        musicScrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f }
+            isVerticalScrollBarEnabled = false
+        }
+        trackListContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        musicScrollView!!.addView(trackListContainer)
+        pane.addView(musicScrollView)
+
+        // Placeholder when no tracks loaded
+        trackListContainer!!.addView(TextView(this).apply {
+            text = "No tracks"
+            textSize = 12f
+            setTextColor(Color.argb(100, 255, 255, 255))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 16.dp() }
+        })
+
+        return pane
+    }
+
     private fun buildMediaControls(): LinearLayout {
         val icons = listOf("\u23EE", if (isPlaying) "\u23F8" else "\u25B6", "\u23ED")
         val row = LinearLayout(this).apply {
@@ -388,6 +670,162 @@ class OverlayService : Service() {
         return row
     }
 
+    // --- Music pane updates ---
+
+    private fun rebuildTrackList() {
+        val container = trackListContainer ?: return
+        container.removeAllViews()
+        trackRowViews.clear()
+
+        if (trackList.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "No tracks"
+                textSize = 12f
+                setTextColor(Color.argb(100, 255, 255, 255))
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = 16.dp() }
+            })
+            return
+        }
+
+        trackList.forEachIndexed { index, track ->
+            val row = buildTrackRow(track, index == musicListIndex)
+            trackRowViews.add(row)
+            container.addView(row)
+        }
+    }
+
+    private fun buildTrackRow(track: TrackItem, selected: Boolean): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(6.dp(), 6.dp(), 6.dp(), 6.dp())
+            background = if (selected) createRoundedBackground(primaryColor, 6) else null
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 2.dp() }
+
+            // Cover art placeholder
+            val artBox = FrameLayout(this@OverlayService).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 4.dp().toFloat()
+                    setColor(Color.argb(60, 255, 255, 255))
+                }
+                val size = 36.dp()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 8.dp() }
+            }
+            artBox.addView(TextView(this@OverlayService).apply {
+                text = "\uD83C\uDFB5"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            })
+            addView(artBox)
+
+            // Title + artist column
+            val metaCol = LinearLayout(this@OverlayService).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    weight = 1f
+                }
+            }
+            metaCol.addView(TextView(this@OverlayService).apply {
+                text = track.title
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            if (track.artist.isNotEmpty()) {
+                metaCol.addView(TextView(this@OverlayService).apply {
+                    text = track.artist
+                    textSize = 10f
+                    setTextColor(Color.argb(160, 255, 255, 255))
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+            }
+            addView(metaCol)
+
+            // Duration
+            if (track.duration > 0L) {
+                addView(TextView(this@OverlayService).apply {
+                    text = formatDuration(track.duration)
+                    textSize = 10f
+                    setTextColor(Color.argb(130, 255, 255, 255))
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { marginStart = 4.dp() }
+                })
+            }
+        }
+    }
+
+    private fun refreshTrackList() {
+        trackRowViews.forEachIndexed { i, row ->
+            row.background = if (i == musicListIndex) createRoundedBackground(primaryColor, 6) else null
+        }
+    }
+
+    private fun scrollToSelected() {
+        val scrollView = musicScrollView ?: return
+        val row = trackRowViews.getOrNull(musicListIndex) ?: return
+        scrollView.post {
+            val rowTop = row.top
+            val rowBottom = row.bottom
+            val scrollY = scrollView.scrollY
+            val visibleHeight = scrollView.height
+            if (rowTop < scrollY) {
+                scrollView.smoothScrollTo(0, rowTop)
+            } else if (rowBottom > scrollY + visibleHeight) {
+                scrollView.smoothScrollTo(0, rowBottom - visibleHeight)
+            }
+        }
+    }
+
+    private fun updateNowPlaying(metadata: MediaMetadataCompat?) {
+        val title = metadata?.getString(MediaMetadataCompat.METADATA_KEY_TITLE) ?: "Not Playing"
+        val artist = metadata?.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)
+            ?: metadata?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ARTIST)
+            ?: "\u2014"
+        val dur = metadata?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
+
+        nowPlayingTitle?.text = title
+        nowPlayingArtist?.text = artist
+
+        val state = mediaController?.playbackState
+        updateSeekBar(state?.position ?: 0L, dur)
+    }
+
+    private fun updateSeekBar(posMs: Long, durMs: Long) {
+        val fill = seekBarFill ?: return
+        val weight = if (durMs > 0L) posMs.toFloat() / durMs.toFloat() else 0f
+        (fill.layoutParams as? LinearLayout.LayoutParams)?.weight = weight
+        fill.requestLayout()
+
+        timeElapsed?.text = formatDuration(posMs)
+        timeRemaining?.text = formatDuration(durMs)
+    }
+
+    private fun formatDuration(ms: Long): String {
+        if (ms <= 0L) return "0:00"
+        val totalSec = ms / 1000
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return "$min:%02d".format(sec)
+    }
+
     // --- Navigation ---
 
     private fun handleKey(keyCode: Int): Boolean {
@@ -420,21 +858,41 @@ class OverlayService : Service() {
                 true
             }
             upKey -> {
-                if (currentPane == 0) {
-                    mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
-                    refreshMediaControls()
+                when (currentPane) {
+                    0 -> {
+                        mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
+                        refreshMediaControls()
+                    }
+                    1 -> if (trackList.isNotEmpty()) {
+                        musicListIndex = (musicListIndex - 1 + trackList.size) % trackList.size
+                        refreshTrackList()
+                        scrollToSelected()
+                    }
                 }
                 true
             }
             downKey -> {
-                if (currentPane == 0) {
-                    mediaCtrlIndex = (mediaCtrlIndex + 1) % 3
-                    refreshMediaControls()
+                when (currentPane) {
+                    0 -> {
+                        mediaCtrlIndex = (mediaCtrlIndex + 1) % 3
+                        refreshMediaControls()
+                    }
+                    1 -> if (trackList.isNotEmpty()) {
+                        musicListIndex = (musicListIndex + 1) % trackList.size
+                        refreshTrackList()
+                        scrollToSelected()
+                    }
                 }
                 true
             }
             enterKey -> {
-                if (currentPane == 0) activateMediaControl()
+                when (currentPane) {
+                    0 -> activateMediaControl()
+                    1 -> if (trackList.isNotEmpty()) {
+                        mediaController?.transportControls
+                            ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                    }
+                }
                 true
             }
             cancelKey -> {
