@@ -22,6 +22,7 @@ import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -229,8 +230,7 @@ class OverlayService : Service() {
             overlayWidth,
             overlayHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -239,9 +239,6 @@ class OverlayService : Service() {
         view.translationX = overlayWidth.toFloat()
         windowManager.addView(view, params)
         overlayView = view
-        view.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true } else false
-        }
         view.requestFocus()
         view.animate()
             .translationX(0f)
@@ -359,6 +356,10 @@ class OverlayService : Service() {
         bar.addView(titleArrowLeft)
         bar.addView(titleText)
         bar.addView(titleArrowRight)
+
+        bar.isClickable = true
+        bar.setOnTouchListener(makePaneSwipeListener())
+
         return bar
     }
 
@@ -586,6 +587,8 @@ class OverlayService : Service() {
                 textSize = 14f
                 setTextColor(tertiaryText)
                 gravity = Gravity.CENTER
+                isClickable = true
+                setOnTouchListener(makePaneSwipeListener())
             })
         }
     }
@@ -883,6 +886,49 @@ class OverlayService : Service() {
             duration = 220
             interpolator = AccelerateInterpolator()
         }
+
+    private fun makePaneSwipeListener(): View.OnTouchListener {
+        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            private val SWIPE_THRESHOLD = 40
+            private val SWIPE_VELOCITY_THRESHOLD = 80
+
+            override fun onDown(e: MotionEvent) = true
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                val diffX = e2.x - (e1?.x ?: 0f)
+                return if (Math.abs(diffX) > SWIPE_THRESHOLD &&
+                    Math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD
+                ) {
+                    if (diffX < 0) {
+                        // Swipe left → next pane
+                        if (currentPane < paneCount - 1) {
+                            viewFlipper.inAnimation = slideIn(fromRight = true)
+                            viewFlipper.outAnimation = slideOut(toLeft = true)
+                            currentPane++
+                            viewFlipper.showNext()
+                            refreshIndicator()
+                        }
+                    } else {
+                        // Swipe right → previous pane
+                        if (currentPane > 0) {
+                            viewFlipper.inAnimation = slideIn(fromRight = false)
+                            viewFlipper.outAnimation = slideOut(toLeft = false)
+                            currentPane--
+                            viewFlipper.showPrevious()
+                            refreshIndicator()
+                        }
+                    }
+                    true
+                } else false
+            }
+        })
+        return View.OnTouchListener { _, event -> detector.onTouchEvent(event) }
+    }
 
     private fun exitWithAnimation() {
         val view = overlayView ?: run { stopSelf(); return }
