@@ -59,6 +59,8 @@ class OverlayService : Service() {
         private const val DEFAULT_KEY_RIGHT = KeyEvent.KEYCODE_DPAD_RIGHT
         private const val DEFAULT_KEY_ENTER = KeyEvent.KEYCODE_ENTER
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
+
+        var isRunning = false
     }
 
     private lateinit var windowManager: WindowManager
@@ -204,6 +206,15 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (isRunning) {
+            exitWithAnimation()
+        } else {
+            isRunning = true
+        }
+        return START_NOT_STICKY
+    }
+
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -214,6 +225,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         super.onDestroy()
         seekHandler.removeCallbacks(seekUpdater)
         mediaController?.unregisterCallback(mediaControllerCallback)
