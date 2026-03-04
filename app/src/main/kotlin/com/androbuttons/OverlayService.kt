@@ -32,6 +32,7 @@ import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.TranslateAnimation
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -66,13 +67,17 @@ class OverlayService : Service() {
 
     // Pane state
     private var currentPane = 0
-    private val paneCount = 3
+    private val paneCount = 2
+    private val paneNames = arrayOf("Music", "Pane 2")
 
-    // Media player state (pane 0)
+    // Media player state
     private var mediaCtrlIndex = 0   // 0=Prev, 1=Play/Pause, 2=Next
     private var isPlaying = false
 
-    // Music pane state (pane 1)
+    // Music pane focus: 0=controls, 1=tracklist
+    private var musicFocusSection = 1
+
+    // Music pane state
     private var musicListIndex = 0
     private val trackList = mutableListOf<TrackItem>()
     private var mediaController: MediaControllerCompat? = null
@@ -89,13 +94,19 @@ class OverlayService : Service() {
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
-    private val controlViews = arrayOfNulls<TextView>(3)
-    private val indicatorViews = arrayOfNulls<TextView>(3)
+    private val controlViews = arrayOfNulls<ImageView>(3)
+    private var titleArrowLeft: TextView? = null
+    private var titleText: TextView? = null
+    private var titleArrowRight: TextView? = null
 
-    private val primaryColor = Color.parseColor("#1565C0")
-    private val surfaceColor = Color.argb(230, 30, 30, 30)
-    private val onSurfaceColor = Color.WHITE
-    private val onPrimaryColor = Color.WHITE
+    // androsnd-inspired color palette
+    private val primaryColor   = Color.parseColor("#F57C00")   // orange
+    private val surfaceColor   = Color.parseColor("#CC2B2B2B") // ~80% dark gray
+    private val secondaryText  = Color.parseColor("#B0B0B0")
+    private val tertiaryText   = Color.parseColor("#808080")
+    private val inactiveBg     = Color.parseColor("#444444")
+    private val seekTrackColor = Color.parseColor("#555555")
+    private val selectedRow    = Color.parseColor("#80F57C00") // 50% orange
 
     private val overlayWidth: Int
         get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
@@ -284,13 +295,22 @@ class OverlayService : Service() {
     private fun buildRootView(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12.dp(), 16.dp(), 12.dp(), 12.dp())
-            background = createLeftRoundedBackground(surfaceColor, 16)
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            background = createLeftRoundedBackground(surfaceColor, 20)
             elevation = 8.dp().toFloat()
         }
 
+        container.addView(buildTitleBar())
+
+        // 1dp divider
+        container.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
+            ).apply { bottomMargin = 8.dp() }
+            setBackgroundColor(seekTrackColor)
+        })
+
         container.addView(buildFlipperView())
-        container.addView(buildPaneIndicator())
 
         container.isFocusable = true
         container.isFocusableInTouchMode = true
@@ -301,133 +321,63 @@ class OverlayService : Service() {
         return container
     }
 
+    private fun buildTitleBar(): LinearLayout {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 6.dp() }
+        }
+
+        titleArrowLeft = TextView(this).apply {
+            text = "◀"
+            textSize = 12f
+            setTextColor(if (currentPane > 0) primaryColor else inactiveBg)
+            setPadding(2.dp(), 4.dp(), 6.dp(), 4.dp())
+        }
+
+        titleText = TextView(this).apply {
+            text = paneNames[currentPane]
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { weight = 1f }
+        }
+
+        titleArrowRight = TextView(this).apply {
+            text = "▶"
+            textSize = 12f
+            setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
+            setPadding(6.dp(), 4.dp(), 2.dp(), 4.dp())
+        }
+
+        bar.addView(titleArrowLeft)
+        bar.addView(titleText)
+        bar.addView(titleArrowRight)
+        return bar
+    }
+
+    private fun refreshTitleBar() {
+        titleText?.text = paneNames[currentPane]
+        titleArrowLeft?.setTextColor(if (currentPane > 0) primaryColor else inactiveBg)
+        titleArrowRight?.setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
+    }
+
     private fun buildFlipperView(): ViewFlipper {
         viewFlipper = ViewFlipper(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0
             ).apply { weight = 1f }
         }
-        viewFlipper.addView(buildMediaPlayerPane())
         viewFlipper.addView(buildMusicPane())
-        viewFlipper.addView(buildEmptyPane("Pane 3"))
+        viewFlipper.addView(buildEmptyPane("Pane 2"))
         viewFlipper.displayedChild = currentPane
         return viewFlipper
-    }
-
-    private fun buildMediaPlayerPane(): LinearLayout {
-        val pane = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        // "Now Playing" header label
-        pane.addView(TextView(this).apply {
-            text = "\u266A  Now Playing"
-            textSize = 11f
-            setTextColor(Color.argb(150, 255, 255, 255))
-            gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
-        })
-
-        // Album art square (fills remaining height via weight)
-        val albumArt = FrameLayout(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(Color.argb(60, 255, 255, 255))
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0
-            ).apply { weight = 1f; bottomMargin = 12.dp() }
-        }
-        albumArt.addView(TextView(this).apply {
-            text = "\uD83C\uDFB5"  // 🎵
-            textSize = 40f
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-        })
-        pane.addView(albumArt)
-
-        // Song title
-        pane.addView(TextView(this).apply {
-            text = "Not Playing"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_HORIZONTAL
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            maxLines = 1
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 2.dp() }
-        })
-
-        // Artist name
-        pane.addView(TextView(this).apply {
-            text = "\u2014"   // em dash as placeholder
-            textSize = 12f
-            setTextColor(Color.argb(160, 255, 255, 255))
-            gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 10.dp() }
-        })
-
-        // Progress track (static visual, no actual seek)
-        val progressTrack = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 4.dp()
-            ).apply { bottomMargin = 4.dp() }
-            background = createRoundedBackground(Color.argb(60, 255, 255, 255), 2)
-        }
-        progressTrack.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT)
-                .apply { weight = 0f }
-            background = createRoundedBackground(primaryColor, 2)
-        })
-        pane.addView(progressTrack)
-
-        // Time row: 0:00 ··· 0:00
-        val timeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 10.dp() }
-        }
-        timeRow.addView(TextView(this).apply {
-            text = "0:00"
-            textSize = 10f
-            setTextColor(Color.argb(130, 255, 255, 255))
-        })
-        timeRow.addView(Space(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
-        })
-        timeRow.addView(TextView(this).apply {
-            text = "0:00"
-            textSize = 10f
-            setTextColor(Color.argb(130, 255, 255, 255))
-        })
-        pane.addView(timeRow)
-
-        // Playback controls: ⏮  ▶/⏸  ⏭
-        pane.addView(buildMediaControls())
-
-        return pane
     }
 
     private fun buildMusicPane(): LinearLayout {
@@ -439,19 +389,7 @@ class OverlayService : Service() {
             )
         }
 
-        // Header
-        pane.addView(TextView(this).apply {
-            text = "\u266A  Music"
-            textSize = 11f
-            setTextColor(Color.argb(150, 255, 255, 255))
-            gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
-        })
-
-        // Now-playing row: cover art + title/artist
+        // Now-playing row: cover art thumbnail + title/artist
         val nowPlayingRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -499,7 +437,7 @@ class OverlayService : Service() {
         nowPlayingArtist = TextView(this).apply {
             text = "\u2014"
             textSize = 11f
-            setTextColor(Color.argb(160, 255, 255, 255))
+            setTextColor(secondaryText)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
@@ -514,7 +452,7 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 4.dp()
             ).apply { bottomMargin = 4.dp() }
-            background = createRoundedBackground(Color.argb(60, 255, 255, 255), 2)
+            background = createRoundedBackground(seekTrackColor, 2)
         }
         seekBarFill = View(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply {
@@ -523,7 +461,6 @@ class OverlayService : Service() {
             background = createRoundedBackground(primaryColor, 2)
         }
         seekTrack.addView(seekBarFill)
-        // Spacer to absorb remaining width
         seekTrack.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply {
                 weight = 1f
@@ -543,12 +480,12 @@ class OverlayService : Service() {
         timeElapsed = TextView(this).apply {
             text = "0:00"
             textSize = 10f
-            setTextColor(Color.argb(130, 255, 255, 255))
+            setTextColor(tertiaryText)
         }
         timeRemaining = TextView(this).apply {
             text = "0:00"
             textSize = 10f
-            setTextColor(Color.argb(130, 255, 255, 255))
+            setTextColor(tertiaryText)
         }
         timeRow.addView(timeElapsed)
         timeRow.addView(Space(this).apply {
@@ -556,6 +493,17 @@ class OverlayService : Service() {
         })
         timeRow.addView(timeRemaining)
         pane.addView(timeRow)
+
+        // Media controls: ⏮ ▶/⏸ ⏭
+        pane.addView(buildMediaControls())
+
+        // Divider
+        pane.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
+            ).apply { topMargin = 8.dp(); bottomMargin = 8.dp() }
+            setBackgroundColor(seekTrackColor)
+        })
 
         // Track list in a ScrollView
         musicScrollView = ScrollView(this).apply {
@@ -578,7 +526,7 @@ class OverlayService : Service() {
         trackListContainer!!.addView(TextView(this).apply {
             text = "No tracks"
             textSize = 12f
-            setTextColor(Color.argb(100, 255, 255, 255))
+            setTextColor(tertiaryText)
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -590,7 +538,11 @@ class OverlayService : Service() {
     }
 
     private fun buildMediaControls(): LinearLayout {
-        val icons = listOf("\u23EE", if (isPlaying) "\u23F8" else "\u25B6", "\u23ED")
+        val drawableIds = listOf(
+            R.drawable.ic_previous,
+            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+            R.drawable.ic_next
+        )
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -599,23 +551,24 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        icons.forEachIndexed { i, icon ->
+        drawableIds.forEachIndexed { i, res ->
             val isSelected = i == mediaCtrlIndex
-            val btn = TextView(this).apply {
-                text = icon
-                textSize = 26f
-                setTextColor(if (isSelected) onPrimaryColor else onSurfaceColor)
-                gravity = Gravity.CENTER
-                minimumHeight = 44.dp()
-                background = if (isSelected) createRoundedBackground(primaryColor, 8) else null
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            val iv = ImageView(this).apply {
+                setImageResource(res)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val btnSize = 48.dp()
+                layoutParams = LinearLayout.LayoutParams(0, btnSize).apply {
                     weight = 1f
                     marginStart = 4.dp()
                     marginEnd = 4.dp()
                 }
+                background = if (isSelected)
+                    createRoundedBackground(primaryColor, 8)
+                else
+                    createRoundedBackground(inactiveBg, 8)
             }
-            controlViews[i] = btn
-            row.addView(btn)
+            controlViews[i] = iv
+            row.addView(iv)
         }
         return row
     }
@@ -631,43 +584,10 @@ class OverlayService : Service() {
             addView(TextView(this@OverlayService).apply {
                 text = label
                 textSize = 14f
-                setTextColor(Color.argb(128, 255, 255, 255))
+                setTextColor(tertiaryText)
                 gravity = Gravity.CENTER
             })
         }
-    }
-
-    private fun buildPaneIndicator(): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 8.dp()
-                bottomMargin = 4.dp()
-            }
-        }
-        for (i in 0 until paneCount) {
-            val isActive = i == currentPane
-            val dot = TextView(this).apply {
-                text = if (isActive) "\u25CF" else "\u25CB"   // ● or ○
-                textSize = 10f
-                setTextColor(if (isActive) Color.WHITE else Color.argb(100, 255, 255, 255))
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    marginStart = 8.dp()
-                    marginEnd = 8.dp()
-                }
-            }
-            indicatorViews[i] = dot
-            row.addView(dot)
-        }
-        return row
     }
 
     // --- Music pane updates ---
@@ -681,7 +601,7 @@ class OverlayService : Service() {
             container.addView(TextView(this).apply {
                 text = "No tracks"
                 textSize = 12f
-                setTextColor(Color.argb(100, 255, 255, 255))
+                setTextColor(tertiaryText)
                 gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -703,7 +623,7 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(6.dp(), 6.dp(), 6.dp(), 6.dp())
-            background = if (selected) createRoundedBackground(primaryColor, 6) else null
+            background = if (selected) createRoundedBackground(selectedRow, 6) else null
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -750,7 +670,7 @@ class OverlayService : Service() {
                 metaCol.addView(TextView(this@OverlayService).apply {
                     text = track.artist
                     textSize = 10f
-                    setTextColor(Color.argb(160, 255, 255, 255))
+                    setTextColor(secondaryText)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 })
@@ -762,7 +682,7 @@ class OverlayService : Service() {
                 addView(TextView(this@OverlayService).apply {
                     text = formatDuration(track.duration)
                     textSize = 10f
-                    setTextColor(Color.argb(130, 255, 255, 255))
+                    setTextColor(tertiaryText)
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -774,7 +694,7 @@ class OverlayService : Service() {
 
     private fun refreshTrackList() {
         trackRowViews.forEachIndexed { i, row ->
-            row.background = if (i == musicListIndex) createRoundedBackground(primaryColor, 6) else null
+            row.background = if (i == musicListIndex) createRoundedBackground(selectedRow, 6) else null
         }
     }
 
@@ -841,9 +761,10 @@ class OverlayService : Service() {
                 if (currentPane < paneCount - 1) {
                     viewFlipper.inAnimation  = slideIn(fromRight = true)
                     viewFlipper.outAnimation = slideOut(toLeft = true)
+                    if (currentPane == 0) musicFocusSection = 1
                     currentPane++
                     viewFlipper.showNext()
-                    refreshIndicator()
+                    refreshTitleBar()
                 }
                 true
             }
@@ -853,44 +774,60 @@ class OverlayService : Service() {
                     viewFlipper.outAnimation = slideOut(toLeft = false)
                     currentPane--
                     viewFlipper.showPrevious()
-                    refreshIndicator()
+                    refreshTitleBar()
                 }
                 true
             }
             upKey -> {
                 when (currentPane) {
-                    0 -> {
-                        mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
-                        refreshMediaControls()
-                    }
-                    1 -> if (trackList.isNotEmpty()) {
-                        musicListIndex = (musicListIndex - 1 + trackList.size) % trackList.size
-                        refreshTrackList()
-                        scrollToSelected()
+                    0 -> when (musicFocusSection) {
+                        0 -> {
+                            mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
+                            refreshMediaControls()
+                        }
+                        else -> if (trackList.isNotEmpty()) {
+                            if (musicListIndex > 0) {
+                                musicListIndex--
+                                refreshTrackList()
+                                scrollToSelected()
+                            } else {
+                                musicFocusSection = 0
+                                mediaCtrlIndex = 2
+                                refreshMediaControls()
+                            }
+                        }
                     }
                 }
                 true
             }
             downKey -> {
                 when (currentPane) {
-                    0 -> {
-                        mediaCtrlIndex = (mediaCtrlIndex + 1) % 3
-                        refreshMediaControls()
-                    }
-                    1 -> if (trackList.isNotEmpty()) {
-                        musicListIndex = (musicListIndex + 1) % trackList.size
-                        refreshTrackList()
-                        scrollToSelected()
+                    0 -> when (musicFocusSection) {
+                        0 -> if (mediaCtrlIndex < 2) {
+                            mediaCtrlIndex++
+                            refreshMediaControls()
+                        } else {
+                            musicFocusSection = 1
+                            musicListIndex = 0
+                            refreshTrackList()
+                        }
+                        else -> if (trackList.isNotEmpty()) {
+                            musicListIndex = (musicListIndex + 1) % trackList.size
+                            refreshTrackList()
+                            scrollToSelected()
+                        }
                     }
                 }
                 true
             }
             enterKey -> {
                 when (currentPane) {
-                    0 -> activateMediaControl()
-                    1 -> if (trackList.isNotEmpty()) {
-                        mediaController?.transportControls
-                            ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                    0 -> when (musicFocusSection) {
+                        0 -> activateMediaControl()
+                        else -> if (trackList.isNotEmpty()) {
+                            mediaController?.transportControls
+                                ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                        }
                     }
                 }
                 true
@@ -906,7 +843,9 @@ class OverlayService : Service() {
     private fun activateMediaControl() {
         if (mediaCtrlIndex == 1) {
             isPlaying = !isPlaying
-            controlViews[1]?.text = if (isPlaying) "\u23F8" else "\u25B6"
+            (controlViews[1])?.setImageResource(
+                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            )
         }
         // Prev (0) and Next (2): reserved for media key dispatch in a future update
     }
@@ -914,16 +853,10 @@ class OverlayService : Service() {
     private fun refreshMediaControls() {
         controlViews.forEachIndexed { i, view ->
             val isSelected = i == mediaCtrlIndex
-            view?.setTextColor(if (isSelected) onPrimaryColor else onSurfaceColor)
-            view?.background = if (isSelected) createRoundedBackground(primaryColor, 8) else null
-        }
-    }
-
-    private fun refreshIndicator() {
-        indicatorViews.forEachIndexed { i, view ->
-            val isActive = i == currentPane
-            view?.text = if (isActive) "\u25CF" else "\u25CB"
-            view?.setTextColor(if (isActive) Color.WHITE else Color.argb(100, 255, 255, 255))
+            view?.background = if (isSelected)
+                createRoundedBackground(primaryColor, 8)
+            else
+                createRoundedBackground(inactiveBg, 8)
         }
     }
 
