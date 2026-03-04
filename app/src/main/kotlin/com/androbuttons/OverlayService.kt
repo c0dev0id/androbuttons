@@ -173,23 +173,45 @@ class OverlayService : Service() {
         }
     }
 
+    private var pendingFolderSubscriptions = 0
+
     private val browserSubscriptionCallback = object : MediaBrowserCompat.SubscriptionCallback() {
         override fun onChildrenLoaded(
             parentId: String,
             children: List<MediaBrowserCompat.MediaItem>
         ) {
-            trackList.clear()
-            children.forEach { item ->
-                val desc = item.description
-                trackList.add(TrackItem(
-                    mediaId = item.mediaId ?: "",
-                    title = desc.title?.toString() ?: "Unknown",
-                    artist = desc.subtitle?.toString() ?: "",
-                    duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
-                ))
+            val playable  = children.filter { it.isPlayable }
+            val browsable = children.filter { it.isBrowsable }
+
+            if (browsable.isNotEmpty() && playable.isEmpty()) {
+                // Root returned folders — clear list once, then recurse into each folder
+                trackList.clear()
+                pendingFolderSubscriptions = browsable.size
+                browsable.forEach { folder ->
+                    mediaBrowser?.subscribe(folder.mediaId ?: return@forEach, this)
+                }
+            } else {
+                // Leaf level — append playable songs
+                if (parentId == (mediaBrowser?.root ?: "")) {
+                    trackList.clear()
+                }
+                playable.forEach { item ->
+                    val desc = item.description
+                    trackList.add(TrackItem(
+                        mediaId = item.mediaId ?: "",
+                        title   = desc.title?.toString() ?: "Unknown",
+                        artist  = desc.subtitle?.toString() ?: "",
+                        duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
+                    ))
+                }
+                if (parentId != (mediaBrowser?.root ?: "")) {
+                    pendingFolderSubscriptions--
+                }
+                if (pendingFolderSubscriptions <= 0) {
+                    musicListIndex = 0
+                    rebuildTrackList()
+                }
             }
-            musicListIndex = 0
-            rebuildTrackList()
         }
     }
 
