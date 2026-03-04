@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaControllerCompat
@@ -88,6 +89,7 @@ class OverlayService : Service() {
     private lateinit var sessionManager: MediaSessionManager
     private lateinit var nlsComponent: ComponentName
     private var activeSessionsListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
+    private var nlsPermissionGranted = true
     private val seekHandler = Handler(Looper.getMainLooper())
     private var musicScrollView: ScrollView? = null
     private var trackListContainer: LinearLayout? = null
@@ -150,6 +152,22 @@ class OverlayService : Service() {
     // --- Media callbacks ---
 
     private val mediaControllerCallback = object : MediaControllerCompat.Callback() {
+        override fun onSessionReady() {
+            // On API 26+, MediaControllerCompat performs an async handshake with the
+            // framework session after construction. getMetadata() and getPlaybackState()
+            // return null until this callback fires — so do all initial state sync here.
+            updateNowPlaying(mediaController?.metadata)
+            val state = mediaController?.playbackState
+            val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
+            isPlaying = playing
+            controlViews[1]?.setImageResource(
+                if (playing) R.drawable.ic_pause else R.drawable.ic_play
+            )
+            if (playing) {
+                seekHandler.removeCallbacks(seekUpdater)
+                seekHandler.post(seekUpdater)
+            }
+        }
         override fun onMetadataChanged(metadata: MediaMetadataCompat?) {
             updateNowPlaying(metadata)
         }
@@ -229,7 +247,13 @@ class OverlayService : Service() {
     private val seekUpdater = object : Runnable {
         override fun run() {
             val state = mediaController?.playbackState ?: return
-            val pos = state.position
+            val pos = if (state.state == PlaybackStateCompat.STATE_PLAYING) {
+                state.position +
+                    ((SystemClock.elapsedRealtime() - state.lastPositionUpdateTime) *
+                        state.playbackSpeed).toLong()
+            } else {
+                state.position
+            }
             val dur = mediaController?.metadata
                 ?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
             updateSeekBar(pos, dur)
@@ -342,12 +366,20 @@ class OverlayService : Service() {
         activeSessionsListener = listener
         try {
             sessionManager.addOnActiveSessionsChangedListener(listener, nlsComponent)
+            nlsPermissionGranted = true
         } catch (_: SecurityException) {
-            // Notification Listener permission not granted; user must enable it in
-            // Settings → Apps → Special app access → Notification access.
+            nlsPermissionGranted = false
+            showNlsPermissionMessage()
+            return
         }
 
-        val sessions = try { sessionManager.getActiveSessions(nlsComponent) } catch (_: SecurityException) { emptyList() }
+        val sessions = try {
+            sessionManager.getActiveSessions(nlsComponent)
+        } catch (_: SecurityException) {
+            nlsPermissionGranted = false
+            showNlsPermissionMessage()
+            return
+        }
         sessions.firstOrNull()?.let { attachToSession(it) }
     }
 
@@ -359,15 +391,7 @@ class OverlayService : Service() {
         @Suppress("DEPRECATION")
         val token = MediaSessionCompat.Token.fromToken(session.sessionToken)
         mediaController = MediaControllerCompat(this, token)
-        mediaController!!.registerCallback(mediaControllerCallback)
-        updateNowPlaying(mediaController!!.metadata)
-        val state = mediaController!!.playbackState
-        isPlaying = state?.state == PlaybackStateCompat.STATE_PLAYING
-        controlViews[1]?.setImageResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
-        if (isPlaying) {
-            seekHandler.removeCallbacks(seekUpdater)
-            seekHandler.post(seekUpdater)
-        }
+        mediaController!!.registerCallback(mediaControllerCallback, Handler(Looper.getMainLooper()))
 
         val component = findMediaBrowserComponent(session.packageName) ?: return
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
@@ -834,6 +858,25 @@ class OverlayService : Service() {
         }
     }
 
+    private fun showNlsPermissionMessage() {
+        nowPlayingTitle?.text = "Permission needed"
+        nowPlayingArtist?.text = "Enable Notification Access"
+        val container = trackListContainer ?: return
+        container.removeAllViews()
+        trackRowViews.clear()
+        container.addView(TextView(this).apply {
+            text = "Go to Settings \u2192 Apps \u2192 Special app access \u2192 Notification access and enable Androbuttons."
+            textSize = 11f
+            setTextColor(secondaryText)
+            gravity = Gravity.CENTER
+            setPadding(8.dp(), 16.dp(), 8.dp(), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        })
+    }
+
     private fun updateNowPlaying(metadata: MediaMetadataCompat?) {
         val title = metadata?.getString(MediaMetadataCompat.METADATA_KEY_TITLE) ?: "Not Playing"
         val artist = metadata?.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)
@@ -855,7 +898,7 @@ class OverlayService : Service() {
         fill.requestLayout()
 
         timeElapsed?.text = formatDuration(posMs)
-        timeRemaining?.text = formatDuration(durMs)
+        timeRemaining?.text = formatDuration((durMs - posMs).coerceAtLeast(0L))
     }
 
     private fun formatDuration(ms: Long): String {
