@@ -85,6 +85,9 @@ class OverlayService : Service() {
     private val trackList = mutableListOf<TrackItem>()
     private var mediaController: MediaControllerCompat? = null
     private var mediaBrowser: MediaBrowserCompat? = null
+    private lateinit var sessionManager: MediaSessionManager
+    private lateinit var nlsComponent: ComponentName
+    private var activeSessionsListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
     private val seekHandler = Handler(Looper.getMainLooper())
     private var musicScrollView: ScrollView? = null
     private var trackListContainer: LinearLayout? = null
@@ -171,6 +174,14 @@ class OverlayService : Service() {
         override fun onConnected() {
             mediaBrowser?.subscribe(mediaBrowser!!.root, browserSubscriptionCallback)
         }
+        override fun onConnectionFailed() {
+            android.util.Log.w("androbuttons", "MediaBrowser connection failed: ${mediaBrowser?.serviceComponent}")
+        }
+        override fun onConnectionSuspended() {
+            android.util.Log.w("androbuttons", "MediaBrowser connection suspended")
+            mediaBrowser?.disconnect()
+            mediaBrowser = null
+        }
     }
 
     private var pendingFolderSubscriptions = 0
@@ -241,6 +252,8 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        nlsComponent = ComponentName(this, MediaListenerService::class.java)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         showOverlay()
@@ -252,6 +265,10 @@ class OverlayService : Service() {
         seekHandler.removeCallbacks(seekUpdater)
         mediaController?.unregisterCallback(mediaControllerCallback)
         mediaBrowser?.disconnect()
+        activeSessionsListener?.let {
+            try { sessionManager.removeOnActiveSessionsChangedListener(it) } catch (_: Exception) {}
+        }
+        activeSessionsListener = null
         removeOverlay()
     }
 
@@ -319,10 +336,25 @@ class OverlayService : Service() {
     // --- Media connection ---
 
     private fun connectMedia() {
-        val sessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-        val cn = ComponentName(this, MediaListenerService::class.java)
-        val sessions = try { sessionManager.getActiveSessions(cn) } catch (_: Exception) { emptyList() }
-        val session = sessions.firstOrNull() ?: return
+        val listener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+            controllers?.firstOrNull()?.let { attachToSession(it) }
+        }
+        activeSessionsListener = listener
+        try {
+            sessionManager.addOnActiveSessionsChangedListener(listener, nlsComponent)
+        } catch (_: SecurityException) {
+            // Notification Listener permission not granted; user must enable it in
+            // Settings → Apps → Special app access → Notification access.
+        }
+
+        val sessions = try { sessionManager.getActiveSessions(nlsComponent) } catch (_: SecurityException) { emptyList() }
+        sessions.firstOrNull()?.let { attachToSession(it) }
+    }
+
+    private fun attachToSession(session: android.media.session.MediaController) {
+        mediaController?.unregisterCallback(mediaControllerCallback)
+        mediaBrowser?.disconnect()
+        mediaBrowser = null
 
         @Suppress("DEPRECATION")
         val token = MediaSessionCompat.Token.fromToken(session.sessionToken)
@@ -333,19 +365,25 @@ class OverlayService : Service() {
         isPlaying = state?.state == PlaybackStateCompat.STATE_PLAYING
         controlViews[1]?.setImageResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
         if (isPlaying) {
+            seekHandler.removeCallbacks(seekUpdater)
             seekHandler.post(seekUpdater)
         }
 
-        // Attempt MediaBrowser connection to browse tracks
-        val pkg = session.packageName
-        val browserIntent = Intent("android.media.browse.MediaBrowserService")
-        val resolveInfos = packageManager.queryIntentServices(browserIntent, 0)
-        val component = resolveInfos
-            .firstOrNull { it.serviceInfo.packageName == pkg }
-            ?.let { ComponentName(it.serviceInfo.packageName, it.serviceInfo.name) }
-            ?: return
+        val component = findMediaBrowserComponent(session.packageName) ?: return
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
         mediaBrowser!!.connect()
+    }
+
+    private fun findMediaBrowserComponent(pkg: String): ComponentName? {
+        for (action in listOf(
+            "android.media.browse.MediaBrowserService",
+            "android.support.v4.media.browse.MediaBrowserService"
+        )) {
+            val info = packageManager.queryIntentServices(Intent(action), 0)
+                .firstOrNull { it.serviceInfo.packageName == pkg }
+            if (info != null) return ComponentName(info.serviceInfo.packageName, info.serviceInfo.name)
+        }
+        return null
     }
 
     // --- UI Building ---
