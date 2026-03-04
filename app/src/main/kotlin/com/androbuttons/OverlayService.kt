@@ -354,9 +354,13 @@ class OverlayService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // No padding — header bar fills edge-to-edge; content padding applied inside sections
-            background = createLeftRoundedBackground(surfaceColor, 16)
-            elevation = 8.dp().toFloat()
+            background = createLeftRoundedBackground(surfaceColor, 16, strokeWidthDp = 2, strokeColor = primaryColor)
+            elevation = 16.dp().toFloat()
             clipToOutline = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                outlineSpotShadowColor    = Color.argb(0x80, 0xF5, 0x7C, 0x00)
+                outlineAmbientShadowColor = Color.argb(0x40, 0xF5, 0x7C, 0x00)
+            }
         }
 
         container.addView(buildTitleBar())
@@ -1031,12 +1035,18 @@ class OverlayService : Service() {
         }
     }
 
-    private fun createLeftRoundedBackground(color: Int, radiusDp: Int): GradientDrawable {
+    private fun createLeftRoundedBackground(
+        color: Int,
+        radiusDp: Int,
+        strokeWidthDp: Int = 0,
+        strokeColor: Int = Color.TRANSPARENT
+    ): GradientDrawable {
         val r = radiusDp.dp().toFloat()
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
             setColor(color)
+            if (strokeWidthDp > 0) setStroke(strokeWidthDp.dp(), strokeColor)
         }
     }
 }
