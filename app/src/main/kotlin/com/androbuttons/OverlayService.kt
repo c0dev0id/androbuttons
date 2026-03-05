@@ -44,9 +44,11 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.graphics.BitmapFactory
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 
 class OverlayService : Service() {
 
@@ -176,7 +178,8 @@ class OverlayService : Service() {
         val title: String,
         val artist: String,
         val duration: Long,  // ms
-        val art: android.graphics.Bitmap? = null
+        val art: android.graphics.Bitmap? = null,
+        val artUri: Uri? = null
     )
 
     // --- Media callbacks ---
@@ -269,7 +272,8 @@ class OverlayService : Service() {
                         title    = desc.title?.toString() ?: "Unknown",
                         artist   = desc.subtitle?.toString() ?: "",
                         duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L,
-                        art      = desc.iconBitmap
+                        art      = desc.iconBitmap,
+                        artUri   = desc.iconUri
                     ))
                 }
                 if (parentId != (mediaBrowser?.root ?: "")) {
@@ -1264,7 +1268,20 @@ class OverlayService : Service() {
                     cornerRadius = 4.dp().toFloat()
                     setColor(Color.argb(60, 255, 255, 255))
                 }
-                if (track.art != null) setImageBitmap(track.art)
+                if (track.art != null) {
+                    setImageBitmap(track.art)
+                } else if (track.artUri != null) {
+                    val uri = track.artUri
+                    val view = this
+                    Thread {
+                        try {
+                            val bmp = contentResolver.openInputStream(uri)?.use {
+                                BitmapFactory.decodeStream(it)
+                            }
+                            if (bmp != null) seekHandler.post { view.setImageBitmap(bmp) }
+                        } catch (_: Exception) {}
+                    }.start()
+                }
             }
             addView(artView)
 
