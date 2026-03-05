@@ -74,7 +74,7 @@ class OverlayService : Service() {
     // Pane state
     private var currentPane = 0
     private val paneCount = 2
-    private val paneNames = arrayOf("Music", "Pane 2")
+    private val paneNames = arrayOf("Music", "Apps")
 
     // Media player state
     private var isPlaying = false
@@ -481,7 +481,7 @@ class OverlayService : Service() {
             ).apply { weight = 1f }
         }
         viewFlipper.addView(buildMusicPane())
-        viewFlipper.addView(buildEmptyPane("Pane 2"))
+        viewFlipper.addView(buildLauncherPane())
         viewFlipper.displayedChild = currentPane
         return viewFlipper
     }
@@ -616,6 +616,53 @@ class OverlayService : Service() {
         })
 
         return pane
+    }
+
+    private fun buildLauncherPane(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            isClickable = true
+            setOnTouchListener(makePaneSwipeListener())
+
+            addView(buildAppButton("Ridelink", "otp.systems.ridelink"))
+        }
+    }
+
+    private fun buildAppButton(label: String, packageName: String): TextView {
+        val isInstalled = packageManager.getLaunchIntentForPackage(packageName) != null
+        return TextView(this).apply {
+            text = label
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(if (isInstalled) Color.WHITE else secondaryText)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(if (isInstalled) primaryColor else inactiveBg)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = isInstalled
+            if (isInstalled) {
+                setOnClickListener {
+                    val intent = packageManager.getLaunchIntentForPackage(packageName)
+                        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (intent != null) {
+                        startActivity(intent)
+                        exitWithAnimation()
+                    }
+                }
+            }
+        }
     }
 
     private fun buildEmptyPane(label: String): LinearLayout {
