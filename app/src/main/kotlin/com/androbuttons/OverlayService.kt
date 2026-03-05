@@ -527,6 +527,7 @@ class OverlayService : Service() {
         viewFlipper.addView(buildLauncherPane())
         viewFlipper.addView(buildSensorsPane())
         viewFlipper.displayedChild = currentPane
+        startSensorCoordinator()
         return viewFlipper
     }
 
