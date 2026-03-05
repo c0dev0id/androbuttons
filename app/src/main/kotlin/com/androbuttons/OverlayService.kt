@@ -764,7 +764,7 @@ class OverlayService : Service() {
         }
         appButtonList = buttonList
         appEntries.forEachIndexed { i, entry ->
-            val btn = buildAppButton(entry, i == 0)
+            val btn = buildAppButton(entry, i == 0, i)
             appButtonViews.add(btn)
             buttonList.addView(btn)
         }
@@ -1100,7 +1100,7 @@ class OverlayService : Service() {
         sensorCoordinator = null
     }
 
-    private fun buildAppButton(entry: AppEntry, isFocused: Boolean): LinearLayout {
+    private fun buildAppButton(entry: AppEntry, isFocused: Boolean, index: Int): LinearLayout {
         val icon = try { packageManager.getApplicationIcon(entry.packageName) } catch (e: Exception) { null }
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
