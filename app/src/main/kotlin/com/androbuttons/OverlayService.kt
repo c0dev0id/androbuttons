@@ -642,6 +642,8 @@ class OverlayService : Service() {
             addView(buildAppButton("ryd", "com.thinxnet.native_tanktaler_android"))
             addView(buildAppButton("Google Drive", "com.google.android.apps.docs"))
             addView(buildAppButton("Google Photos", "com.google.android.apps.photos"))
+            addView(buildAppButton("Google Maps", "com.google.android.apps.maps"))
+            addView(buildAppButton("DMD2", "com.thorkracing.dmd2launcher"))
         }
     }
 
