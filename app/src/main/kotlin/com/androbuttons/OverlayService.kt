@@ -203,6 +203,7 @@ class OverlayService : Service() {
             if (newId != currentlyPlayingMediaId) {
                 currentlyPlayingMediaId = newId
                 refreshTrackList()
+                scrollToPlaying()
             }
             updateNowPlaying(metadata)
         }
@@ -1223,6 +1224,7 @@ class OverlayService : Service() {
             trackRowViews.add(row)
             container.addView(row)
         }
+        scrollToPlaying()
     }
 
     private fun trackRowBackground(isFocused: Boolean, isPlaying: Boolean): GradientDrawable? {
@@ -1231,7 +1233,7 @@ class OverlayService : Service() {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 6.dp().toFloat()
             setColor(if (isPlaying) playingRow else Color.TRANSPARENT)
-            if (isFocused) setStroke(2.dp(), primaryColor)
+            if (isFocused || isPlaying) setStroke(2.dp(), primaryColor)
         }
     }
 
@@ -1331,6 +1333,15 @@ class OverlayService : Service() {
         }
     }
 
+    private fun scrollToPlaying() {
+        val scrollView = musicScrollView ?: return
+        val playingIndex = trackList.indexOfFirst { it.mediaId == currentlyPlayingMediaId }
+        val row = trackRowViews.getOrNull(playingIndex) ?: return
+        scrollView.post {
+            scrollView.scrollTo(0, row.top)
+        }
+    }
+
     private fun appButtonBackground(isFocused: Boolean, isInstalled: Boolean): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -1352,7 +1363,7 @@ class OverlayService : Service() {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 8.dp().toFloat()
             setColor(if (isPlaying) primaryColor else inactiveBg)
-            if (isFocused) setStroke(2.dp(), Color.WHITE)
+            if (isFocused) setStroke(2.dp(), primaryColor)
         }
     }
 
@@ -1372,7 +1383,7 @@ class OverlayService : Service() {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 8.dp().toFloat()
                 setColor(Color.TRANSPARENT)
-                setStroke(2.dp(), Color.WHITE)
+                setStroke(2.dp(), primaryColor)
             }
         } else null
         refreshTrackList()
