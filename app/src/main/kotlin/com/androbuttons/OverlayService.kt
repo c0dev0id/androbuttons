@@ -317,21 +317,21 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (isRunning) {
-            exitWithAnimation()
+        if (overlayView != null) {
+            hideOverlay()
         } else {
-            isRunning = true
+            showOverlay()
         }
         return START_NOT_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        showOverlay()
     }
 
     override fun onDestroy() {
@@ -489,7 +489,7 @@ class OverlayService : Service() {
             if (event.action == KeyEvent.ACTION_DOWN) handleKey(keyCode) else false
         }
         container.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true }
+            if (event.action == MotionEvent.ACTION_OUTSIDE) { hideOverlay(); true }
             else false
         }
 
@@ -1199,7 +1199,7 @@ class OverlayService : Service() {
                         if (!sortingMode && entry.isInstalled) {
                             val intent = packageManager.getLaunchIntentForPackage(entry.packageName)
                                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            if (intent != null) { startActivity(intent); exitWithAnimation() }
+                            if (intent != null) { startActivity(intent); hideOverlay() }
                         }
                         return true
                     }
@@ -1660,7 +1660,7 @@ class OverlayService : Service() {
                     musicFocus = MusicFocus.LIST
                     refreshMusicFocus()
                 } else {
-                    exitWithAnimation()
+                    hideOverlay()
                 }
                 true
             }
@@ -1737,13 +1737,13 @@ class OverlayService : Service() {
         return View.OnTouchListener { _, event -> detector.onTouchEvent(event) }
     }
 
-    private fun exitWithAnimation() {
-        val view = overlayView ?: run { stopSelf(); return }
+    private fun hideOverlay() {
+        val view = overlayView ?: return
         view.animate()
             .translationX(view.width.toFloat())
             .setDuration(200)
             .setInterpolator(AccelerateInterpolator())
-            .withEndAction { stopSelf() }
+            .withEndAction { removeOverlay() }
             .start()
     }
 
