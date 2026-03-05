@@ -74,14 +74,11 @@ class OverlayService : Service() {
     private val paneNames = arrayOf("Music", "Pane 2")
 
     // Media player state
-    private var mediaCtrlIndex = 0   // 0=Prev, 1=Play/Pause, 2=Next
     private var isPlaying = false
-
-    // Music pane focus: 0=controls, 1=tracklist
-    private var musicFocusSection = 1
 
     // Music pane state
     private var musicListIndex = 0
+    private var currentlyPlayingMediaId: String? = null
     private val trackList = mutableListOf<TrackItem>()
     private var mediaController: MediaControllerCompat? = null
     private var mediaBrowser: MediaBrowserCompat? = null
@@ -90,14 +87,12 @@ class OverlayService : Service() {
     private var trackListContainer: LinearLayout? = null
     private val trackRowViews = mutableListOf<LinearLayout>()
     private var seekBarFill: View? = null
-    private var nowPlayingTitle: TextView? = null
-    private var nowPlayingArtist: TextView? = null
+    private var coverArtView: ImageView? = null
     private var timeElapsed: TextView? = null
     private var timeRemaining: TextView? = null
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
-    private val controlViews = arrayOfNulls<ImageView>(3)
     private var titleArrowLeft: TextView? = null
     private var titleText: TextView? = null
     private var titleArrowRight: TextView? = null
@@ -111,7 +106,7 @@ class OverlayService : Service() {
     private val tertiaryText    = Color.parseColor("#808080")
     private val inactiveBg      = Color.parseColor("#444444")
     private val seekTrackColor  = Color.parseColor("#555555")
-    private val selectedRow     = Color.parseColor("#80F57C00") // 50% orange
+    private val playingRow      = Color.parseColor("#28F57C00") // ~16% orange tint for currently playing
 
     private val statusBarHeight: Int
         get() {
@@ -141,7 +136,8 @@ class OverlayService : Service() {
         val mediaId: String,
         val title: String,
         val artist: String,
-        val duration: Long   // ms
+        val duration: Long,  // ms
+        val art: android.graphics.Bitmap? = null
     )
 
     // --- Media callbacks ---
@@ -151,27 +147,28 @@ class OverlayService : Service() {
             // On API 26+, MediaControllerCompat performs an async handshake with the
             // framework session after construction. getMetadata() and getPlaybackState()
             // return null until this callback fires — so do all initial state sync here.
-            updateNowPlaying(mediaController?.metadata)
+            val metadata = mediaController?.metadata
+            currentlyPlayingMediaId = metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)
+            updateNowPlaying(metadata)
             val state = mediaController?.playbackState
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
-            controlViews[1]?.setImageResource(
-                if (playing) R.drawable.ic_pause else R.drawable.ic_play
-            )
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
             }
         }
         override fun onMetadataChanged(metadata: MediaMetadataCompat?) {
+            val newId = metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)
+            if (newId != currentlyPlayingMediaId) {
+                currentlyPlayingMediaId = newId
+                refreshTrackList()
+            }
             updateNowPlaying(metadata)
         }
         override fun onPlaybackStateChanged(state: PlaybackStateCompat?) {
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
-            controlViews[1]?.setImageResource(
-                if (playing) R.drawable.ic_pause else R.drawable.ic_play
-            )
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
@@ -226,10 +223,11 @@ class OverlayService : Service() {
                 playable.forEach { item ->
                     val desc = item.description
                     trackList.add(TrackItem(
-                        mediaId = item.mediaId ?: "",
-                        title   = desc.title?.toString() ?: "Unknown",
-                        artist  = desc.subtitle?.toString() ?: "",
-                        duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
+                        mediaId  = item.mediaId ?: "",
+                        title    = desc.title?.toString() ?: "Unknown",
+                        artist   = desc.subtitle?.toString() ?: "",
+                        duration = desc.extras?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L,
+                        art      = desc.iconBitmap
                     ))
                 }
                 if (parentId != (mediaBrowser?.root ?: "")) {
@@ -473,77 +471,54 @@ class OverlayService : Service() {
         // --- Player card ---
         val playerCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
             background = createRoundedBackground(playerAreaColor, 12)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 10.dp() }
+            clipToOutline = true
         }
 
-        // Now-playing row: cover art thumbnail + title/artist
-        val nowPlayingRow = LinearLayout(this).apply {
+        // Full-width cover art
+        coverArtView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(inactiveBg)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 1f }
+        }
+        // Make the cover square by matching height to width after layout
+        coverArtView!!.addOnLayoutChangeListener { v, left, _, right, _, _, _, _, _ ->
+            val w = right - left
+            if (w > 0 && v.layoutParams.height != w) {
+                v.layoutParams = (v.layoutParams as LinearLayout.LayoutParams).also { it.height = w; it.weight = 0f }
+                v.requestLayout()
+            }
+        }
+        playerCard.addView(coverArtView)
+
+        // Seekbar row: elapsed — track — remaining
+        val seekRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(10.dp(), 8.dp(), 10.dp(), 10.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
-        }
-
-        val artBox = FrameLayout(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 6.dp().toFloat()
-                setColor(Color.argb(80, 255, 255, 255))
-            }
-            val size = 48.dp()
-            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 10.dp() }
-        }
-        artBox.addView(TextView(this).apply {
-            text = "\uD83C\uDFB5"
-            textSize = 22f
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
             )
-        })
-        nowPlayingRow.addView(artBox)
-
-        val metaCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                weight = 1f
-            }
         }
-        nowPlayingTitle = TextView(this).apply {
-            text = "Not Playing"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+        timeElapsed = TextView(this).apply {
+            text = "0:00"
+            textSize = 10f
+            setTextColor(tertiaryText)
         }
-        nowPlayingArtist = TextView(this).apply {
-            text = "\u2014"
-            textSize = 11f
-            setTextColor(secondaryText)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        metaCol.addView(nowPlayingTitle)
-        metaCol.addView(nowPlayingArtist)
-        nowPlayingRow.addView(metaCol)
-        playerCard.addView(nowPlayingRow)
-
-        // Seekbar track
         val seekTrack = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 4.dp()
-            ).apply { bottomMargin = 4.dp() }
+            layoutParams = LinearLayout.LayoutParams(0, 4.dp()).apply {
+                weight = 1f
+                marginStart = 6.dp()
+                marginEnd = 6.dp()
+            }
             background = createRoundedBackground(seekTrackColor, 2)
         }
         seekBarFill = View(this).apply {
@@ -558,36 +533,15 @@ class OverlayService : Service() {
                 weight = 1f
             }
         })
-        playerCard.addView(seekTrack)
-
-        // Time row
-        val timeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
-        }
-        timeElapsed = TextView(this).apply {
-            text = "0:00"
-            textSize = 10f
-            setTextColor(tertiaryText)
-        }
         timeRemaining = TextView(this).apply {
             text = "0:00"
             textSize = 10f
             setTextColor(tertiaryText)
         }
-        timeRow.addView(timeElapsed)
-        timeRow.addView(Space(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 0).apply { weight = 1f }
-        })
-        timeRow.addView(timeRemaining)
-        playerCard.addView(timeRow)
-
-        // Media controls: ⏮ ▶/⏸ ⏭
-        playerCard.addView(buildMediaControls())
+        seekRow.addView(timeElapsed)
+        seekRow.addView(seekTrack)
+        seekRow.addView(timeRemaining)
+        playerCard.addView(seekRow)
 
         pane.addView(playerCard)
 
@@ -636,42 +590,6 @@ class OverlayService : Service() {
         return pane
     }
 
-    private fun buildMediaControls(): LinearLayout {
-        val drawableIds = listOf(
-            R.drawable.ic_previous,
-            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
-            R.drawable.ic_next
-        )
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        drawableIds.forEachIndexed { i, res ->
-            val isSelected = i == mediaCtrlIndex
-            val iv = ImageView(this).apply {
-                setImageResource(res)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                val btnSize = 48.dp()
-                layoutParams = LinearLayout.LayoutParams(0, btnSize).apply {
-                    weight = 1f
-                    marginStart = 4.dp()
-                    marginEnd = 4.dp()
-                }
-                background = if (isSelected)
-                    createRoundedBackground(primaryColor, 8)
-                else
-                    createRoundedBackground(inactiveBg, 8)
-            }
-            controlViews[i] = iv
-            row.addView(iv)
-        }
-        return row
-    }
-
     private fun buildEmptyPane(label: String): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -714,44 +632,46 @@ class OverlayService : Service() {
         }
 
         trackList.forEachIndexed { index, track ->
-            val row = buildTrackRow(track, index == musicListIndex)
+            val row = buildTrackRow(track, index == musicListIndex, track.mediaId == currentlyPlayingMediaId)
             trackRowViews.add(row)
             container.addView(row)
         }
     }
 
-    private fun buildTrackRow(track: TrackItem, selected: Boolean): LinearLayout {
+    private fun trackRowBackground(isFocused: Boolean, isPlaying: Boolean): GradientDrawable? {
+        if (!isFocused && !isPlaying) return null
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 6.dp().toFloat()
+            setColor(if (isPlaying) playingRow else Color.TRANSPARENT)
+            if (isFocused) setStroke(2.dp(), primaryColor)
+        }
+    }
+
+    private fun buildTrackRow(track: TrackItem, isFocused: Boolean, isPlaying: Boolean): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(6.dp(), 6.dp(), 6.dp(), 6.dp())
-            background = if (selected) createRoundedBackground(selectedRow, 6) else null
+            background = trackRowBackground(isFocused, isPlaying)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 2.dp() }
 
-            // Cover art placeholder
-            val artBox = FrameLayout(this@OverlayService).apply {
+            // Cover art thumbnail
+            val artView = ImageView(this@OverlayService).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                val size = 36.dp()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 8.dp() }
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     cornerRadius = 4.dp().toFloat()
                     setColor(Color.argb(60, 255, 255, 255))
                 }
-                val size = 36.dp()
-                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 8.dp() }
+                if (track.art != null) setImageBitmap(track.art)
             }
-            artBox.addView(TextView(this@OverlayService).apply {
-                text = "\uD83C\uDFB5"
-                textSize = 14f
-                gravity = Gravity.CENTER
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
-                )
-            })
-            addView(artBox)
+            addView(artView)
 
             // Title + artist column
             val metaCol = LinearLayout(this@OverlayService).apply {
@@ -796,7 +716,9 @@ class OverlayService : Service() {
 
     private fun refreshTrackList() {
         trackRowViews.forEachIndexed { i, row ->
-            row.background = if (i == musicListIndex) createRoundedBackground(selectedRow, 6) else null
+            val focused = i == musicListIndex
+            val playing = trackList.getOrNull(i)?.mediaId == currentlyPlayingMediaId
+            row.background = trackRowBackground(focused, playing)
         }
     }
 
@@ -817,15 +739,11 @@ class OverlayService : Service() {
     }
 
     private fun updateNowPlaying(metadata: MediaMetadataCompat?) {
-        val title = metadata?.getString(MediaMetadataCompat.METADATA_KEY_TITLE) ?: "Not Playing"
-        val artist = metadata?.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)
-            ?: metadata?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ARTIST)
-            ?: "\u2014"
+        val bitmap = metadata?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+        if (bitmap != null) coverArtView?.setImageBitmap(bitmap)
+        else coverArtView?.setImageDrawable(null)
+
         val dur = metadata?.getLong(MediaMetadataCompat.METADATA_KEY_DURATION) ?: 0L
-
-        nowPlayingTitle?.text = title
-        nowPlayingArtist?.text = artist
-
         val state = mediaController?.playbackState
         updateSeekBar(state?.position ?: 0L, dur)
     }
@@ -863,7 +781,6 @@ class OverlayService : Service() {
                 if (currentPane < paneCount - 1) {
                     viewFlipper.inAnimation  = slideIn(fromRight = true)
                     viewFlipper.outAnimation = slideOut(toLeft = true)
-                    if (currentPane == 0) musicFocusSection = 1
                     currentPane++
                     viewFlipper.showNext()
                     refreshTitleBar()
@@ -881,56 +798,25 @@ class OverlayService : Service() {
                 true
             }
             upKey -> {
-                when (currentPane) {
-                    0 -> when (musicFocusSection) {
-                        0 -> {
-                            mediaCtrlIndex = (mediaCtrlIndex - 1 + 3) % 3
-                            refreshMediaControls()
-                        }
-                        else -> if (trackList.isNotEmpty()) {
-                            if (musicListIndex > 0) {
-                                musicListIndex--
-                                refreshTrackList()
-                                scrollToSelected()
-                            } else {
-                                musicFocusSection = 0
-                                mediaCtrlIndex = 2
-                                refreshMediaControls()
-                            }
-                        }
-                    }
+                if (currentPane == 0 && trackList.isNotEmpty() && musicListIndex > 0) {
+                    musicListIndex--
+                    refreshTrackList()
+                    scrollToSelected()
                 }
                 true
             }
             downKey -> {
-                when (currentPane) {
-                    0 -> when (musicFocusSection) {
-                        0 -> if (mediaCtrlIndex < 2) {
-                            mediaCtrlIndex++
-                            refreshMediaControls()
-                        } else {
-                            musicFocusSection = 1
-                            musicListIndex = 0
-                            refreshTrackList()
-                        }
-                        else -> if (trackList.isNotEmpty()) {
-                            musicListIndex = (musicListIndex + 1) % trackList.size
-                            refreshTrackList()
-                            scrollToSelected()
-                        }
-                    }
+                if (currentPane == 0 && trackList.isNotEmpty() && musicListIndex < trackList.size - 1) {
+                    musicListIndex++
+                    refreshTrackList()
+                    scrollToSelected()
                 }
                 true
             }
             enterKey -> {
-                when (currentPane) {
-                    0 -> when (musicFocusSection) {
-                        0 -> activateMediaControl()
-                        else -> if (trackList.isNotEmpty()) {
-                            mediaController?.transportControls
-                                ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
-                        }
-                    }
+                if (currentPane == 0 && trackList.isNotEmpty()) {
+                    mediaController?.transportControls
+                        ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
                 }
                 true
             }
@@ -939,25 +825,6 @@ class OverlayService : Service() {
                 true
             }
             else -> false
-        }
-    }
-
-    private fun activateMediaControl() {
-        val tc = mediaController?.transportControls ?: return
-        when (mediaCtrlIndex) {
-            0 -> tc.skipToPrevious()
-            1 -> if (isPlaying) tc.pause() else tc.play()
-            2 -> tc.skipToNext()
-        }
-    }
-
-    private fun refreshMediaControls() {
-        controlViews.forEachIndexed { i, view ->
-            val isSelected = i == mediaCtrlIndex
-            view?.background = if (isSelected)
-                createRoundedBackground(primaryColor, 8)
-            else
-                createRoundedBackground(inactiveBg, 8)
         }
     }
 
