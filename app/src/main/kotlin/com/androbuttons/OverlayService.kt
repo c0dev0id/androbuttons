@@ -141,6 +141,8 @@ class OverlayService : Service() {
     private var titleArrowLeft: TextView? = null
     private var titleText: TextView? = null
     private var titleArrowRight: TextView? = null
+    private var titleLeftZone: LinearLayout? = null
+    private var titleRightZone: LinearLayout? = null
 
     // Color palette
     private val primaryColor    = Color.parseColor("#F57C00")   // orange
@@ -501,7 +503,6 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(headerColor)
-            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -512,7 +513,6 @@ class OverlayService : Service() {
             text = "◀"
             textSize = 13f
             setTextColor(if (currentPane > 0) primaryColor else inactiveBg)
-            setPadding(0, 0, 8.dp(), 0)
         }
 
         titleText = TextView(this).apply {
@@ -521,52 +521,76 @@ class OverlayService : Service() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { weight = 1f }
         }
 
         titleArrowRight = TextView(this).apply {
             text = "▶"
             textSize = 13f
             setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
-            setPadding(8.dp(), 0, 0, 0)
         }
 
-        titleArrowLeft?.setOnClickListener {
-            if (currentPane > 0) {
-                viewFlipper.inAnimation  = slideIn(fromRight = false)
-                viewFlipper.outAnimation = slideOut(toLeft = false)
-                currentPane--
-                viewFlipper.showPrevious()
-                refreshTitleBar()
+        titleLeftZone = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { weight = 1f }
+            alpha = if (currentPane > 0) 1f else 0.4f
+            addView(titleArrowLeft)
+            setOnClickListener {
+                if (currentPane > 0) {
+                    viewFlipper.inAnimation  = slideIn(fromRight = false)
+                    viewFlipper.outAnimation = slideOut(toLeft = false)
+                    currentPane--
+                    viewFlipper.showPrevious()
+                    refreshTitleBar()
+                }
             }
         }
 
-        titleArrowRight?.setOnClickListener {
-            if (currentPane < paneCount - 1) {
-                viewFlipper.inAnimation  = slideIn(fromRight = true)
-                viewFlipper.outAnimation = slideOut(toLeft = true)
-                currentPane++
-                viewFlipper.showNext()
-                refreshTitleBar()
+        val centerZone = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 12.dp(), 0, 12.dp())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { weight = 2f }
+            addView(titleText)
+        }
+
+        titleRightZone = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { weight = 1f }
+            alpha = if (currentPane < paneCount - 1) 1f else 0.4f
+            addView(titleArrowRight)
+            setOnClickListener {
+                if (currentPane < paneCount - 1) {
+                    viewFlipper.inAnimation  = slideIn(fromRight = true)
+                    viewFlipper.outAnimation = slideOut(toLeft = true)
+                    currentPane++
+                    viewFlipper.showNext()
+                    refreshTitleBar()
+                }
             }
         }
 
-        bar.addView(titleArrowLeft)
-        bar.addView(titleText)
-        bar.addView(titleArrowRight)
-
-        bar.isClickable = true
-        bar.setOnTouchListener(makePaneSwipeListener())
+        bar.addView(titleLeftZone)
+        bar.addView(centerZone)
+        bar.addView(titleRightZone)
 
         return bar
     }
 
     private fun refreshTitleBar() {
         titleText?.text = paneNames[currentPane]
-        titleArrowLeft?.setTextColor(if (currentPane > 0) primaryColor else inactiveBg)
-        titleArrowRight?.setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
+        val leftActive = currentPane > 0
+        val rightActive = currentPane < paneCount - 1
+        titleArrowLeft?.setTextColor(if (leftActive) primaryColor else inactiveBg)
+        titleArrowRight?.setTextColor(if (rightActive) primaryColor else inactiveBg)
+        titleLeftZone?.alpha = if (leftActive) 1f else 0.4f
+        titleRightZone?.alpha = if (rightActive) 1f else 0.4f
     }
 
     private fun buildFlipperView(): ViewFlipper {
