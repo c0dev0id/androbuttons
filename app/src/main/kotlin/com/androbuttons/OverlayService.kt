@@ -10,7 +10,9 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -687,7 +689,7 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 8.dp() }
-            background = playButtonBackground(musicFocus == MusicFocus.BUTTON, isPlaying)
+            background = playButtonBackground(musicFocus == MusicFocus.BUTTON)
             isClickable = true
             addView(playIcon)
             addView(playLabel)
@@ -1210,6 +1212,13 @@ class OverlayService : Service() {
                 }
             )
             setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        v.drawableHotspotChanged(event.x, event.y)
+                        v.isPressed = true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
+                }
                 val handled = gestureDetector.onTouchEvent(event)
                 if (sortingMode && sortDragIndex == index) {
                     when (event.action) {
@@ -1432,13 +1441,19 @@ class OverlayService : Service() {
         }
     }
 
-    private fun appButtonBackground(isFocused: Boolean, isInstalled: Boolean): GradientDrawable {
-        return GradientDrawable().apply {
+    private fun appButtonBackground(isFocused: Boolean, isInstalled: Boolean): RippleDrawable {
+        val bg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 8.dp().toFloat()
             setColor(inactiveBg)
             if (isFocused) setStroke(2.dp(), primaryColor)
         }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(Color.argb(80, 255, 255, 255)), bg, mask)
     }
 
     private fun refreshAppList() {
@@ -1448,18 +1463,24 @@ class OverlayService : Service() {
         }
     }
 
-    private fun playButtonBackground(isFocused: Boolean, isPlaying: Boolean): GradientDrawable {
-        return GradientDrawable().apply {
+    private fun playButtonBackground(isFocused: Boolean): RippleDrawable {
+        val bg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 8.dp().toFloat()
-            setColor(if (isPlaying) primaryColor else inactiveBg)
+            setColor(inactiveBg)
             if (isFocused) setStroke(2.dp(), primaryColor)
         }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(Color.argb(80, 255, 255, 255)), bg, mask)
     }
 
     private fun refreshPlayButton() {
         val focused = musicFocus == MusicFocus.BUTTON
-        playPauseButton?.background = playButtonBackground(focused, isPlaying)
+        playPauseButton?.background = playButtonBackground(focused)
         val iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         playPauseIcon?.setImageDrawable(ContextCompat.getDrawable(this, iconRes))
         playPauseLabel?.text = if (isPlaying) "Pause" else "Play"
