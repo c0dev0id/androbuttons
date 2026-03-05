@@ -136,6 +136,11 @@ class OverlayService : Service() {
     private var forceDisplayView: ForceDisplayView? = null
     private var sensorCoordinator: SensorCoordinator? = null
 
+    // Lazy pane containers — populated after the overlay is visible
+    private var pane0Container: FrameLayout? = null
+    private var pane1Container: FrameLayout? = null
+    private var pane2Container: FrameLayout? = null
+
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
     private var titleArrowLeft: TextView? = null
@@ -411,7 +416,10 @@ class OverlayService : Service() {
             .setDuration(250)
             .setInterpolator(DecelerateInterpolator())
             .start()
-        connectMedia()
+        seekHandler.post {
+            buildPaneIfNeeded(0)
+            connectMedia()
+        }
     }
 
     private fun removeOverlay() {
@@ -554,6 +562,7 @@ class OverlayService : Service() {
             addView(titleArrowLeft)
             setOnClickListener {
                 if (currentPane > 0) {
+                    buildPaneIfNeeded(currentPane - 1)
                     viewFlipper.inAnimation  = slideIn(fromRight = false)
                     viewFlipper.outAnimation = slideOut(toLeft = false)
                     currentPane--
@@ -582,6 +591,7 @@ class OverlayService : Service() {
             addView(titleArrowRight)
             setOnClickListener {
                 if (currentPane < paneCount - 1) {
+                    buildPaneIfNeeded(currentPane + 1)
                     viewFlipper.inAnimation  = slideIn(fromRight = true)
                     viewFlipper.outAnimation = slideOut(toLeft = true)
                     currentPane++
@@ -614,12 +624,26 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0
             ).apply { weight = 1f }
         }
-        viewFlipper.addView(buildMusicPane())
-        viewFlipper.addView(buildLauncherPane())
-        viewFlipper.addView(buildSensorsPane())
+        pane0Container = FrameLayout(this).also { viewFlipper.addView(it) }
+        pane1Container = FrameLayout(this).also { viewFlipper.addView(it) }
+        pane2Container = FrameLayout(this).also { viewFlipper.addView(it) }
         viewFlipper.displayedChild = currentPane
-        startSensorCoordinator()
         return viewFlipper
+    }
+
+    private fun buildPaneIfNeeded(index: Int) {
+        val container = when (index) {
+            0 -> pane0Container
+            1 -> pane1Container
+            2 -> pane2Container
+            else -> null
+        } ?: return
+        if (container.childCount > 0) return
+        when (index) {
+            0 -> container.addView(buildMusicPane())
+            1 -> container.addView(buildLauncherPane())
+            2 -> container.addView(buildSensorsPane())
+        }
     }
 
     private fun buildMusicPane(): LinearLayout {
@@ -841,7 +865,26 @@ class OverlayService : Service() {
             setOnTouchListener(makePaneSwipeListener())
         }
         launcherPane = pane
-        showAppsView()
+
+        val configureBtn = TextView(this).apply {
+            text = "Configure"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(secondaryText)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(inactiveBg)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            setOnClickListener { showConfigureView() }
+        }
+        pane.addView(configureBtn)
         return pane
     }
 
@@ -1615,6 +1658,7 @@ class OverlayService : Service() {
         return when (keyCode) {
             rightKey -> {
                 if (currentPane < paneCount - 1) {
+                    buildPaneIfNeeded(currentPane + 1)
                     viewFlipper.inAnimation  = slideIn(fromRight = true)
                     viewFlipper.outAnimation = slideOut(toLeft = true)
                     currentPane++
@@ -1627,6 +1671,7 @@ class OverlayService : Service() {
             }
             leftKey -> {
                 if (currentPane > 0) {
+                    buildPaneIfNeeded(currentPane - 1)
                     if (currentPane == 2) stopSensorCoordinator()
                     viewFlipper.inAnimation  = slideIn(fromRight = false)
                     viewFlipper.outAnimation = slideOut(toLeft = false)
@@ -1751,6 +1796,7 @@ class OverlayService : Service() {
                     if (diffX < 0) {
                         // Swipe left → next pane
                         if (currentPane < paneCount - 1) {
+                            buildPaneIfNeeded(currentPane + 1)
                             viewFlipper.inAnimation = slideIn(fromRight = true)
                             viewFlipper.outAnimation = slideOut(toLeft = true)
                             currentPane++
@@ -1761,6 +1807,7 @@ class OverlayService : Service() {
                     } else {
                         // Swipe right → previous pane
                         if (currentPane > 0) {
+                            buildPaneIfNeeded(currentPane - 1)
                             if (currentPane == 2) stopSensorCoordinator()
                             viewFlipper.inAnimation = slideIn(fromRight = false)
                             viewFlipper.outAnimation = slideOut(toLeft = false)
