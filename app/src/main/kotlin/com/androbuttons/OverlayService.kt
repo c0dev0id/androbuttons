@@ -165,14 +165,29 @@ class OverlayService : Service() {
             return if (id > 0) resources.getDimensionPixelSize(id) else 0
         }
 
+    private val visibleStatusBarHeight: Int
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics
+                .windowInsets.getInsets(android.view.WindowInsets.Type.statusBars()).top
+        } else {
+            statusBarHeight
+        }
+
+    private val visibleNavBarHeight: Int
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics
+                .windowInsets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
+        } else {
+            navBarHeight
+        }
+
     private val overlayWidth: Int
         get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
 
     private val overlayHeight: Int
         get() {
             val screenH = resources.displayMetrics.heightPixels
-            val usableH = screenH - statusBarHeight - navBarHeight
-            return usableH
+            return screenH - visibleStatusBarHeight - visibleNavBarHeight
         }
 
     // --- Data ---
@@ -382,7 +397,7 @@ class OverlayService : Service() {
         ).apply {
             gravity = Gravity.END or Gravity.TOP
             x = 20.dp()
-            y = statusBarHeight
+            y = visibleStatusBarHeight
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
