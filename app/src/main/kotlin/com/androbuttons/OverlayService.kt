@@ -58,6 +58,9 @@ class OverlayService : Service() {
         private const val DEFAULT_KEY_RIGHT = KeyEvent.KEYCODE_DPAD_RIGHT
         private const val DEFAULT_KEY_ENTER = KeyEvent.KEYCODE_ENTER
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
+        // Secondary (non-configurable) gamepad mappings
+        private const val SECONDARY_KEY_ENTER = KeyEvent.KEYCODE_BUTTON_Y
+        private const val SECONDARY_KEY_CANCEL = KeyEvent.KEYCODE_BUTTON_A
         private const val TARGET_PLAYER_PKG = "de.codevoid.androsnd"
 
         var isRunning = false
@@ -319,7 +322,8 @@ class OverlayService : Service() {
             overlayWidth,
             overlayHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -389,6 +393,10 @@ class OverlayService : Service() {
         container.setOnKeyListener { _, keyCode, event ->
             if (event.action == KeyEvent.ACTION_DOWN) handleKey(keyCode) else false
         }
+        container.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) { exitWithAnimation(); true }
+            else false
+        }
 
         return container
     }
@@ -428,6 +436,26 @@ class OverlayService : Service() {
             textSize = 13f
             setTextColor(if (currentPane < paneCount - 1) primaryColor else inactiveBg)
             setPadding(8.dp(), 0, 0, 0)
+        }
+
+        titleArrowLeft?.setOnClickListener {
+            if (currentPane > 0) {
+                viewFlipper.inAnimation  = slideIn(fromRight = false)
+                viewFlipper.outAnimation = slideOut(toLeft = false)
+                currentPane--
+                viewFlipper.showPrevious()
+                refreshTitleBar()
+            }
+        }
+
+        titleArrowRight?.setOnClickListener {
+            if (currentPane < paneCount - 1) {
+                viewFlipper.inAnimation  = slideIn(fromRight = true)
+                viewFlipper.outAnimation = slideOut(toLeft = true)
+                currentPane++
+                viewFlipper.showNext()
+                refreshTitleBar()
+            }
         }
 
         bar.addView(titleArrowLeft)
@@ -632,7 +660,7 @@ class OverlayService : Service() {
         }
 
         trackList.forEachIndexed { index, track ->
-            val row = buildTrackRow(track, index == musicListIndex, track.mediaId == currentlyPlayingMediaId)
+            val row = buildTrackRow(track, index == musicListIndex, track.mediaId == currentlyPlayingMediaId, index)
             trackRowViews.add(row)
             container.addView(row)
         }
@@ -648,7 +676,7 @@ class OverlayService : Service() {
         }
     }
 
-    private fun buildTrackRow(track: TrackItem, isFocused: Boolean, isPlaying: Boolean): LinearLayout {
+    private fun buildTrackRow(track: TrackItem, isFocused: Boolean, isPlaying: Boolean, index: Int): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -658,6 +686,12 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 2.dp() }
+            isClickable = true
+            setOnClickListener {
+                musicListIndex = index
+                mediaController?.transportControls?.playFromMediaId(track.mediaId, null)
+                refreshTrackList()
+            }
 
             // Cover art thumbnail
             val artView = ImageView(this@OverlayService).apply {
@@ -813,14 +847,14 @@ class OverlayService : Service() {
                 }
                 true
             }
-            enterKey -> {
+            enterKey, SECONDARY_KEY_ENTER -> {
                 if (currentPane == 0 && trackList.isNotEmpty()) {
                     mediaController?.transportControls
                         ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
                 }
                 true
             }
-            cancelKey -> {
+            cancelKey, SECONDARY_KEY_CANCEL -> {
                 exitWithAnimation()
                 true
             }
