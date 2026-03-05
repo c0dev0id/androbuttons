@@ -96,6 +96,13 @@ class OverlayService : Service() {
     private var timeRemaining: TextView? = null
     private var playPauseButton: ImageView? = null
 
+    // Apps pane state
+    private data class AppEntry(val label: String, val packageName: String, val isInstalled: Boolean)
+    private val appEntries = mutableListOf<AppEntry>()
+    private var appListIndex = 0
+    private var appScrollView: ScrollView? = null
+    private val appButtonViews = mutableListOf<LinearLayout>()
+
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
     private var titleArrowLeft: TextView? = null
@@ -647,63 +654,105 @@ class OverlayService : Service() {
     }
 
     private fun buildLauncherPane(): LinearLayout {
-        return LinearLayout(this).apply {
+        val rawApps = listOf(
+            "Voice Note" to "com.voicenotes.main",
+            "Ridelink" to "otp.systems.ridelink",
+            "Cardo Connect" to "com.cardo.smartset",
+            "Sena +Mesh" to "com.sena.plusmesh",
+            "Telegram" to "org.telegram.messenger",
+            "WhatsApp" to "com.whatsapp",
+            "Discord" to "com.discord",
+            "Blitzer.de" to "de.blitzer.plus",
+            "MeteoBlue" to "com.meteoblue.droid",
+            "PACE Drive" to "car.pace.drive",
+            "ryd" to "com.thinxnet.native_tanktaler_android",
+            "Google Drive" to "com.google.android.apps.docs",
+            "Google Photos" to "com.google.android.apps.photos",
+            "Google Maps" to "com.google.android.apps.maps",
+            "DMD2" to "com.thorkracing.dmd2launcher"
+        )
+
+        appEntries.clear()
+        appEntries.addAll(rawApps.map { (label, pkg) ->
+            AppEntry(label, pkg, packageManager.getLaunchIntentForPackage(pkg) != null)
+        })
+
+        appListIndex = 0
+        appButtonViews.clear()
+
+        val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        appEntries.forEachIndexed { i, entry ->
+            val btn = buildAppButton(entry, i == 0)
+            appButtonViews.add(btn)
+            container.addView(btn)
+        }
+
+        appScrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            addView(container)
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
             isClickable = true
             setOnTouchListener(makePaneSwipeListener())
-            
-            addView(buildAppButton("Voice Note", "com.voicenotes.main"))
-            addView(buildAppButton("Ridelink", "otp.systems.ridelink"))
-            addView(buildAppButton("Cardo Connect", "com.cardo.smartset"))
-            addView(buildAppButton("Sena +Mesh", "com.sena.plusmesh"))
-            addView(buildAppButton("Telegram", "org.telegram.messenger"))
-            addView(buildAppButton("WhatsApp", "com.whatsapp"))
-            addView(buildAppButton("Discord", "com.discord"))
-            addView(buildAppButton("Blitzer.de", "de.blitzer.plus"))
-            addView(buildAppButton("MeteoBlue", "com.meteoblue.droid"))
-            addView(buildAppButton("PACE Drive", "car.pace.drive"))
-            addView(buildAppButton("ryd", "com.thinxnet.native_tanktaler_android"))
-            addView(buildAppButton("Google Drive", "com.google.android.apps.docs"))
-            addView(buildAppButton("Google Photos", "com.google.android.apps.photos"))
-            addView(buildAppButton("Google Maps", "com.google.android.apps.maps"))
-            addView(buildAppButton("DMD2", "com.thorkracing.dmd2launcher"))
+            addView(appScrollView)
         }
     }
 
-    private fun buildAppButton(label: String, packageName: String): TextView {
-        val isInstalled = packageManager.getLaunchIntentForPackage(packageName) != null
-        return TextView(this).apply {
-            text = label
-            textSize = 16f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setTextColor(if (isInstalled) Color.WHITE else secondaryText)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(if (isInstalled) primaryColor else inactiveBg)
-            }
+    private fun buildAppButton(entry: AppEntry, isFocused: Boolean): LinearLayout {
+        val icon = try { packageManager.getApplicationIcon(entry.packageName) } catch (e: Exception) { null }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 8.dp() }
-            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
-            isClickable = isInstalled
-            if (isInstalled) {
+            background = appButtonBackground(isFocused, entry.isInstalled)
+            isClickable = entry.isInstalled
+            if (entry.isInstalled) {
                 setOnClickListener {
-                    val intent = packageManager.getLaunchIntentForPackage(packageName)
+                    val intent = packageManager.getLaunchIntentForPackage(entry.packageName)
                         ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    if (intent != null) {
-                        startActivity(intent)
-                        exitWithAnimation()
-                    }
+                    if (intent != null) { startActivity(intent); exitWithAnimation() }
                 }
             }
+
+            if (icon != null) {
+                addView(ImageView(this@OverlayService).apply {
+                    setImageDrawable(icon)
+                    val size = 36.dp()
+                    layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 10.dp() }
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                })
+            }
+
+            addView(TextView(this@OverlayService).apply {
+                text = entry.label
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(if (entry.isInstalled) Color.WHITE else secondaryText)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    weight = 1f
+                }
+            })
         }
     }
 
@@ -861,6 +910,35 @@ class OverlayService : Service() {
         }
     }
 
+    private fun appButtonBackground(isFocused: Boolean, isInstalled: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(if (isInstalled) primaryColor else inactiveBg)
+            if (isFocused) setStroke(2.dp(), Color.WHITE)
+        }
+    }
+
+    private fun refreshAppList() {
+        appButtonViews.forEachIndexed { i, btn ->
+            val entry = appEntries.getOrNull(i) ?: return@forEachIndexed
+            btn.background = appButtonBackground(i == appListIndex, entry.isInstalled)
+        }
+    }
+
+    private fun scrollToSelectedApp() {
+        val scrollView = appScrollView ?: return
+        val btn = appButtonViews.getOrNull(appListIndex) ?: return
+        scrollView.post {
+            val top = btn.top
+            val bottom = btn.bottom
+            val scrollY = scrollView.scrollY
+            val visible = scrollView.height
+            if (top < scrollY) scrollView.smoothScrollTo(0, top)
+            else if (bottom > scrollY + visible) scrollView.smoothScrollTo(0, bottom - visible)
+        }
+    }
+
     private fun updateNowPlaying(metadata: MediaMetadataCompat?) {
         val bitmap = metadata?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
         if (bitmap != null) coverArtView?.setImageBitmap(bitmap)
@@ -907,6 +985,7 @@ class OverlayService : Service() {
                     currentPane++
                     viewFlipper.showNext()
                     refreshTitleBar()
+                    if (currentPane == 1) { appListIndex = 0; refreshAppList() }
                 }
                 true
             }
@@ -925,6 +1004,10 @@ class OverlayService : Service() {
                     musicListIndex--
                     refreshTrackList()
                     scrollToSelected()
+                } else if (currentPane == 1 && appButtonViews.isNotEmpty() && appListIndex > 0) {
+                    appListIndex--
+                    refreshAppList()
+                    scrollToSelectedApp()
                 }
                 true
             }
@@ -933,6 +1016,10 @@ class OverlayService : Service() {
                     musicListIndex++
                     refreshTrackList()
                     scrollToSelected()
+                } else if (currentPane == 1 && appButtonViews.isNotEmpty() && appListIndex < appButtonViews.size - 1) {
+                    appListIndex++
+                    refreshAppList()
+                    scrollToSelectedApp()
                 }
                 true
             }
@@ -940,6 +1027,8 @@ class OverlayService : Service() {
                 if (currentPane == 0 && trackList.isNotEmpty()) {
                     mediaController?.transportControls
                         ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                } else if (currentPane == 1) {
+                    appButtonViews.getOrNull(appListIndex)?.performClick()
                 }
                 true
             }
