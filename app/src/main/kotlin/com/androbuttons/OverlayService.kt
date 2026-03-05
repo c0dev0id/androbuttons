@@ -130,7 +130,7 @@ class OverlayService : Service() {
         get() {
             val screenH = resources.displayMetrics.heightPixels
             val usableH = screenH - statusBarHeight - navBarHeight
-            return (usableH * 0.90f).toInt()
+            return usableH
         }
 
     // --- Data ---
@@ -326,10 +326,9 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.OPAQUE
         ).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            gravity = Gravity.END or Gravity.TOP
             x = 20.dp()
-            // Shift y to center within usable area (between status bar and nav bar)
-            y = (statusBarHeight - navBarHeight) / 2
+            y = statusBarHeight
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
@@ -489,6 +488,7 @@ class OverlayService : Service() {
     private fun buildMusicPane(): LinearLayout {
         val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            weightSum = 1.0f
             setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -502,8 +502,8 @@ class OverlayService : Service() {
             background = createRoundedBackground(playerAreaColor, 12)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 10.dp() }
+                0
+            ).apply { weight = 0.3f; bottomMargin = 10.dp() }
             clipToOutline = true
         }
 
@@ -512,16 +512,9 @@ class OverlayService : Service() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             setBackgroundColor(inactiveBg)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0
-            ).apply { weight = 1f }
-        }
-        // Make the cover square by matching height to width after layout
-        coverArtView!!.addOnLayoutChangeListener { v, left, _, right, _, _, _, _, _ ->
-            val w = right - left
-            if (w > 0 && v.layoutParams.height != w) {
-                v.layoutParams = (v.layoutParams as LinearLayout.LayoutParams).also { it.height = w; it.weight = 0f }
-                v.requestLayout()
-            }
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
         }
         playerCard.addView(coverArtView)
 
@@ -574,7 +567,14 @@ class OverlayService : Service() {
         pane.addView(playerCard)
 
         // --- Playlist section ---
-        pane.addView(TextView(this).apply {
+        val playlistContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0
+            ).apply { weight = 0.7f }
+        }
+
+        playlistContainer.addView(TextView(this).apply {
             text = "PLAYLIST"
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
@@ -601,7 +601,9 @@ class OverlayService : Service() {
             )
         }
         musicScrollView!!.addView(trackListContainer)
-        pane.addView(musicScrollView)
+        playlistContainer.addView(musicScrollView)
+
+        pane.addView(playlistContainer)
 
         // Placeholder when no tracks loaded
         trackListContainer!!.addView(TextView(this).apply {
