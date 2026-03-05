@@ -111,6 +111,9 @@ class OverlayService : Service() {
     private var appListIndex = 0
     private var appScrollView: ScrollView? = null
     private val appButtonViews = mutableListOf<LinearLayout>()
+    private var appButtonList: LinearLayout? = null
+    private var sortingMode = false
+    private var sortDragIndex = -1
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
@@ -700,17 +703,16 @@ class OverlayService : Service() {
             saveSelectedApps(defaultApps)
             return defaultApps
         }
-        return prefs.getStringSet(KEY_SELECTED_APPS, emptySet())
-            ?.mapNotNull { entry ->
-                val idx = entry.indexOf('|')
-                if (idx > 0) entry.substring(0, idx) to entry.substring(idx + 1) else null
-            }
-            ?: emptyList()
+        val raw = prefs.getString(KEY_SELECTED_APPS, "") ?: ""
+        return raw.lines().filter { it.isNotBlank() }.mapNotNull { entry ->
+            val idx = entry.indexOf('|')
+            if (idx > 0) entry.substring(0, idx) to entry.substring(idx + 1) else null
+        }
     }
 
     private fun saveSelectedApps(apps: List<Pair<String, String>>) {
-        val encoded = apps.map { (label, pkg) -> "$label|$pkg" }.toSet()
-        prefs.edit().putStringSet(KEY_SELECTED_APPS, encoded).apply()
+        val encoded = apps.joinToString("\n") { (label, pkg) -> "$label|$pkg" }
+        prefs.edit().putString(KEY_SELECTED_APPS, encoded).apply()
     }
 
     private fun buildLauncherPane(): LinearLayout {
@@ -743,6 +745,7 @@ class OverlayService : Service() {
         val buttonList = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+        appButtonList = buttonList
         appEntries.forEachIndexed { i, entry ->
             val btn = buildAppButton(entry, i == 0)
             appButtonViews.add(btn)
@@ -910,12 +913,48 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 8.dp() }
             background = appButtonBackground(isFocused, entry.isInstalled)
-            isClickable = entry.isInstalled
-            if (entry.isInstalled) {
-                setOnClickListener {
-                    val intent = packageManager.getLaunchIntentForPackage(entry.packageName)
-                        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    if (intent != null) { startActivity(intent); exitWithAnimation() }
+            isClickable = true
+            val gestureDetector = GestureDetector(this@OverlayService,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent) = true
+                    override fun onSingleTapUp(e: MotionEvent): Boolean {
+                        if (!sortingMode && entry.isInstalled) {
+                            val intent = packageManager.getLaunchIntentForPackage(entry.packageName)
+                                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (intent != null) { startActivity(intent); exitWithAnimation() }
+                        }
+                        return true
+                    }
+                    override fun onLongPress(e: MotionEvent) {
+                        sortingMode = true
+                        sortDragIndex = index
+                        this@apply.background = appButtonBackground(true, entry.isInstalled)
+                        this@apply.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+            )
+            setOnTouchListener { v, event ->
+                val handled = gestureDetector.onTouchEvent(event)
+                if (sortingMode && sortDragIndex == index) {
+                    when (event.action) {
+                        MotionEvent.ACTION_MOVE -> {
+                            val newIdx = getIndexAtY(event.rawY)
+                            if (newIdx != sortDragIndex) {
+                                swapAppButtons(sortDragIndex, newIdx)
+                                sortDragIndex = newIdx
+                            }
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            sortingMode = false
+                            sortDragIndex = -1
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                            saveSelectedApps(appEntries.map { it.label to it.packageName })
+                            refreshAppList()
+                        }
+                    }
+                    true
+                } else {
+                    handled
                 }
             }
 
@@ -1098,8 +1137,8 @@ class OverlayService : Service() {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 8.dp().toFloat()
-            setColor(if (isInstalled) primaryColor else inactiveBg)
-            if (isFocused) setStroke(2.dp(), Color.WHITE)
+            setColor(inactiveBg)
+            if (isFocused) setStroke(2.dp(), primaryColor)
         }
     }
 
@@ -1139,6 +1178,28 @@ class OverlayService : Service() {
             }
         } else null
         refreshTrackList()
+    }
+
+    private fun getIndexAtY(rawY: Float): Int {
+        val loc = IntArray(2)
+        for (i in appButtonViews.indices) {
+            val btn = appButtonViews[i]
+            btn.getLocationOnScreen(loc)
+            if (rawY < loc[1] + btn.height) return i
+        }
+        return (appButtonViews.size - 1).coerceAtLeast(0)
+    }
+
+    private fun swapAppButtons(from: Int, to: Int) {
+        val entry = appEntries.removeAt(from)
+        appEntries.add(to, entry)
+        val view = appButtonViews.removeAt(from)
+        appButtonViews.add(to, view)
+        val container = appButtonList ?: return
+        container.removeAllViews()
+        appButtonViews.forEach { container.addView(it) }
+        refreshAppList()
+        appButtonViews[to].background = appButtonBackground(true, appEntries[to].isInstalled)
     }
 
     private fun scrollToSelectedApp() {
