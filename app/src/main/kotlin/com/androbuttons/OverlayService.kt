@@ -951,15 +951,48 @@ class OverlayService : Service() {
             )
         }
 
-        // --- Compass ---
-        inner.addView(sectionHeader("COMPASS"))
+        // --- Compass + G-Force (side by side) ---
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val compassCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        compassCol.addView(sectionHeader("COMPASS"))
         compassView = CompassView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        inner.addView(compassView)
+        compassCol.addView(compassView)
+        topRow.addView(compassCol)
+
+        topRow.addView(Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(4.dp(), LinearLayout.LayoutParams.MATCH_PARENT)
+        })
+
+        val forceCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        forceCol.addView(sectionHeader("G-FORCE"))
+        forceDisplayView = ForceDisplayView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        forceCol.addView(forceDisplayView)
+        topRow.addView(forceCol)
+
+        inner.addView(topRow)
         inner.addView(spacer())
 
         // --- Speedometer ---
@@ -1006,17 +1039,6 @@ class OverlayService : Service() {
             }
         }
         inner.addView(calibrateBtn)
-        inner.addView(spacer())
-
-        // --- G-Force ---
-        inner.addView(sectionHeader("G-FORCE"))
-        forceDisplayView = ForceDisplayView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        inner.addView(forceDisplayView)
 
         return ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
