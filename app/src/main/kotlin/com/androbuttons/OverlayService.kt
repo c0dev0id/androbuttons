@@ -85,6 +85,8 @@ class OverlayService : Service() {
     private var isPlaying = false
 
     // Music pane state
+    private enum class MusicFocus { BUTTON, LIST, LIST_ENTRY }
+    private var musicFocus = MusicFocus.BUTTON
     private var musicListIndex = 0
     private var currentlyPlayingMediaId: String? = null
     private val trackList = mutableListOf<TrackItem>()
@@ -98,7 +100,10 @@ class OverlayService : Service() {
     private var coverArtView: ImageView? = null
     private var timeElapsed: TextView? = null
     private var timeRemaining: TextView? = null
-    private var playPauseButton: ImageView? = null
+    private var playPauseButton: LinearLayout? = null
+    private var playPauseIcon: ImageView? = null
+    private var playPauseLabel: TextView? = null
+    private var playlistContainerView: LinearLayout? = null
 
     // Apps pane state
     private data class AppEntry(val label: String, val packageName: String, val isInstalled: Boolean)
@@ -169,8 +174,7 @@ class OverlayService : Service() {
             val state = mediaController?.playbackState
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
-            val iconRes = if (playing) R.drawable.ic_pause else R.drawable.ic_play
-            playPauseButton?.setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
+            refreshPlayButton()
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
@@ -187,8 +191,7 @@ class OverlayService : Service() {
         override fun onPlaybackStateChanged(state: PlaybackStateCompat?) {
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
-            val iconRes = if (playing) R.drawable.ic_pause else R.drawable.ic_play
-            playPauseButton?.setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
+            refreshPlayButton()
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
@@ -505,7 +508,6 @@ class OverlayService : Service() {
     private fun buildMusicPane(): LinearLayout {
         val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            weightSum = 1.0f
             setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -520,7 +522,7 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0
-            ).apply { weight = 0.3f; bottomMargin = 10.dp() }
+            ).apply { weight = 1f; bottomMargin = 10.dp() }
             clipToOutline = true
         }
 
@@ -581,37 +583,53 @@ class OverlayService : Service() {
         seekRow.addView(timeRemaining)
         playerCard.addView(seekRow)
 
-        // Full-width play/pause button
-        playPauseButton = ImageView(this).apply {
-            val iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-            setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
-            scaleType = ImageView.ScaleType.CENTER
-            setBackgroundColor(Color.TRANSPARENT)
-            isClickable = true
-            isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                48.dp()
-            )
-            setOnClickListener {
-                if (isPlaying) {
-                    mediaController?.transportControls?.pause()
-                } else {
-                    mediaController?.transportControls?.play()
-                }
-            }
-        }
-        playerCard.addView(playPauseButton)
-
         pane.addView(playerCard)
 
+        // --- Standalone play/pause button ---
+        val playIcon = ImageView(this).apply {
+            val iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val size = 24.dp()
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 10.dp() }
+        }
+        playPauseIcon = playIcon
+
+        val playLabel = TextView(this).apply {
+            text = if (isPlaying) "Pause" else "Play"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+        playPauseLabel = playLabel
+
+        playPauseButton = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            background = playButtonBackground(musicFocus == MusicFocus.BUTTON, isPlaying)
+            isClickable = true
+            addView(playIcon)
+            addView(playLabel)
+            setOnClickListener {
+                if (isPlaying) mediaController?.transportControls?.pause()
+                else mediaController?.transportControls?.play()
+            }
+        }
+        pane.addView(playPauseButton)
+
         // --- Playlist section ---
-        val playlistContainer = LinearLayout(this).apply {
+        playlistContainerView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0
-            ).apply { weight = 0.7f }
+            ).apply { weight = 3f }
         }
+        val playlistContainer = playlistContainerView!!
 
         playlistContainer.addView(TextView(this).apply {
             text = "PLAYLIST"
@@ -642,7 +660,7 @@ class OverlayService : Service() {
         musicScrollView!!.addView(trackListContainer)
         playlistContainer.addView(musicScrollView)
 
-        pane.addView(playlistContainer)
+        pane.addView(playlistContainerView)
 
         // Placeholder when no tracks loaded
         trackListContainer!!.addView(TextView(this).apply {
@@ -964,7 +982,7 @@ class OverlayService : Service() {
         }
 
         trackList.forEachIndexed { index, track ->
-            val row = buildTrackRow(track, index == musicListIndex, track.mediaId == currentlyPlayingMediaId, index)
+            val row = buildTrackRow(track, musicFocus == MusicFocus.LIST_ENTRY && index == musicListIndex, track.mediaId == currentlyPlayingMediaId, index)
             trackRowViews.add(row)
             container.addView(row)
         }
@@ -1054,7 +1072,7 @@ class OverlayService : Service() {
 
     private fun refreshTrackList() {
         trackRowViews.forEachIndexed { i, row ->
-            val focused = i == musicListIndex
+            val focused = musicFocus == MusicFocus.LIST_ENTRY && i == musicListIndex
             val playing = trackList.getOrNull(i)?.mediaId == currentlyPlayingMediaId
             row.background = trackRowBackground(focused, playing)
         }
@@ -1090,6 +1108,37 @@ class OverlayService : Service() {
             val entry = appEntries.getOrNull(i) ?: return@forEachIndexed
             btn.background = appButtonBackground(i == appListIndex, entry.isInstalled)
         }
+    }
+
+    private fun playButtonBackground(isFocused: Boolean, isPlaying: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(if (isPlaying) primaryColor else inactiveBg)
+            if (isFocused) setStroke(2.dp(), Color.WHITE)
+        }
+    }
+
+    private fun refreshPlayButton() {
+        val focused = musicFocus == MusicFocus.BUTTON
+        playPauseButton?.background = playButtonBackground(focused, isPlaying)
+        val iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        playPauseIcon?.setImageDrawable(ContextCompat.getDrawable(this, iconRes))
+        playPauseLabel?.text = if (isPlaying) "Pause" else "Play"
+    }
+
+    private fun refreshMusicFocus() {
+        refreshPlayButton()
+        val listFocused = musicFocus == MusicFocus.LIST || musicFocus == MusicFocus.LIST_ENTRY
+        playlistContainerView?.background = if (listFocused) {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(Color.TRANSPARENT)
+                setStroke(2.dp(), Color.WHITE)
+            }
+        } else null
+        refreshTrackList()
     }
 
     private fun scrollToSelectedApp() {
@@ -1162,14 +1211,23 @@ class OverlayService : Service() {
                     currentPane--
                     viewFlipper.showPrevious()
                     refreshTitleBar()
+                    if (currentPane == 0) { musicFocus = MusicFocus.BUTTON; refreshMusicFocus() }
                 }
                 true
             }
             upKey -> {
-                if (currentPane == 0 && trackList.isNotEmpty() && musicListIndex > 0) {
-                    musicListIndex--
-                    refreshTrackList()
-                    scrollToSelected()
+                if (currentPane == 0) {
+                    when (musicFocus) {
+                        MusicFocus.BUTTON -> { /* already at top */ }
+                        MusicFocus.LIST -> { musicFocus = MusicFocus.BUTTON; refreshMusicFocus() }
+                        MusicFocus.LIST_ENTRY -> {
+                            if (musicListIndex > 0) {
+                                musicListIndex--
+                                refreshTrackList()
+                                scrollToSelected()
+                            }
+                        }
+                    }
                 } else if (currentPane == 1 && appButtonViews.isNotEmpty() && appListIndex > 0) {
                     appListIndex--
                     refreshAppList()
@@ -1178,10 +1236,18 @@ class OverlayService : Service() {
                 true
             }
             downKey -> {
-                if (currentPane == 0 && trackList.isNotEmpty() && musicListIndex < trackList.size - 1) {
-                    musicListIndex++
-                    refreshTrackList()
-                    scrollToSelected()
+                if (currentPane == 0) {
+                    when (musicFocus) {
+                        MusicFocus.BUTTON -> { musicFocus = MusicFocus.LIST; refreshMusicFocus() }
+                        MusicFocus.LIST -> { /* already at bottom */ }
+                        MusicFocus.LIST_ENTRY -> {
+                            if (musicListIndex < trackList.size - 1) {
+                                musicListIndex++
+                                refreshTrackList()
+                                scrollToSelected()
+                            }
+                        }
+                    }
                 } else if (currentPane == 1 && appButtonViews.isNotEmpty() && appListIndex < appButtonViews.size - 1) {
                     appListIndex++
                     refreshAppList()
@@ -1190,16 +1256,29 @@ class OverlayService : Service() {
                 true
             }
             enterKey, SECONDARY_KEY_ENTER -> {
-                if (currentPane == 0 && trackList.isNotEmpty()) {
-                    mediaController?.transportControls
-                        ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                if (currentPane == 0) {
+                    when (musicFocus) {
+                        MusicFocus.BUTTON -> playPauseButton?.performClick()
+                        MusicFocus.LIST -> { musicFocus = MusicFocus.LIST_ENTRY; refreshMusicFocus() }
+                        MusicFocus.LIST_ENTRY -> {
+                            if (trackList.isNotEmpty()) {
+                                mediaController?.transportControls
+                                    ?.playFromMediaId(trackList[musicListIndex].mediaId, null)
+                            }
+                        }
+                    }
                 } else if (currentPane == 1) {
                     appButtonViews.getOrNull(appListIndex)?.performClick()
                 }
                 true
             }
             cancelKey, SECONDARY_KEY_CANCEL -> {
-                exitWithAnimation()
+                if (currentPane == 0 && musicFocus == MusicFocus.LIST_ENTRY) {
+                    musicFocus = MusicFocus.LIST
+                    refreshMusicFocus()
+                } else {
+                    exitWithAnimation()
+                }
                 true
             }
             else -> false
