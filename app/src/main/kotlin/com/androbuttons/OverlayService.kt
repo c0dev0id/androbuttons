@@ -39,6 +39,7 @@ import android.widget.Space
 import android.widget.TextView
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 class OverlayService : Service() {
 
@@ -93,6 +94,7 @@ class OverlayService : Service() {
     private var coverArtView: ImageView? = null
     private var timeElapsed: TextView? = null
     private var timeRemaining: TextView? = null
+    private var playPauseButton: ImageView? = null
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
@@ -156,6 +158,8 @@ class OverlayService : Service() {
             val state = mediaController?.playbackState
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
+            val iconRes = if (playing) R.drawable.ic_pause else R.drawable.ic_play
+            playPauseButton?.setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
@@ -172,6 +176,8 @@ class OverlayService : Service() {
         override fun onPlaybackStateChanged(state: PlaybackStateCompat?) {
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
+            val iconRes = if (playing) R.drawable.ic_pause else R.drawable.ic_play
+            playPauseButton?.setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
             if (playing) {
                 seekHandler.removeCallbacks(seekUpdater)
                 seekHandler.post(seekUpdater)
@@ -570,6 +576,28 @@ class OverlayService : Service() {
         seekRow.addView(seekTrack)
         seekRow.addView(timeRemaining)
         playerCard.addView(seekRow)
+
+        // Full-width play/pause button
+        playPauseButton = ImageView(this).apply {
+            val iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            setImageDrawable(ContextCompat.getDrawable(this@OverlayService, iconRes))
+            scaleType = ImageView.ScaleType.CENTER
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                48.dp()
+            )
+            setOnClickListener {
+                if (isPlaying) {
+                    mediaController?.transportControls?.pause()
+                } else {
+                    mediaController?.transportControls?.play()
+                }
+            }
+        }
+        playerCard.addView(playPauseButton)
 
         pane.addView(playerCard)
 
