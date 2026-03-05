@@ -63,6 +63,7 @@ class OverlayService : Service() {
         private const val SECONDARY_KEY_ENTER = KeyEvent.KEYCODE_BUTTON_Y
         private const val SECONDARY_KEY_CANCEL = KeyEvent.KEYCODE_BUTTON_A
         private const val TARGET_PLAYER_PKG = "de.codevoid.androsnd"
+        private const val KEY_SELECTED_APPS = "selected_apps"
 
         var isRunning = false
     }
@@ -71,6 +72,9 @@ class OverlayService : Service() {
     private lateinit var prefs: SharedPreferences
     private var overlayView: View? = null
     private var windowParams: WindowManager.LayoutParams? = null
+
+    // Launcher pane reference for dynamic rebuild
+    private var launcherPane: LinearLayout? = null
 
     // Pane state
     private var currentPane = 0
@@ -653,66 +657,226 @@ class OverlayService : Service() {
         return pane
     }
 
+    private val defaultApps = listOf(
+        "Voice Note" to "com.voicenotes.main",
+        "Ridelink" to "otp.systems.ridelink",
+        "Cardo Connect" to "com.cardo.smartset",
+        "Sena +Mesh" to "com.sena.plusmesh",
+        "Telegram" to "org.telegram.messenger",
+        "WhatsApp" to "com.whatsapp",
+        "Discord" to "com.discord",
+        "Blitzer.de" to "de.blitzer.plus",
+        "MeteoBlue" to "com.meteoblue.droid",
+        "PACE Drive" to "car.pace.drive",
+        "ryd" to "com.thinxnet.native_tanktaler_android",
+        "Google Drive" to "com.google.android.apps.docs",
+        "Google Photos" to "com.google.android.apps.photos",
+        "Google Maps" to "com.google.android.apps.maps",
+        "DMD2" to "com.thorkracing.dmd2launcher"
+    )
+
+    private fun loadSelectedApps(): List<Pair<String, String>> {
+        if (!prefs.contains(KEY_SELECTED_APPS)) {
+            saveSelectedApps(defaultApps)
+            return defaultApps
+        }
+        return prefs.getStringSet(KEY_SELECTED_APPS, emptySet())
+            ?.mapNotNull { entry ->
+                val idx = entry.indexOf('|')
+                if (idx > 0) entry.substring(0, idx) to entry.substring(idx + 1) else null
+            }
+            ?: emptyList()
+    }
+
+    private fun saveSelectedApps(apps: List<Pair<String, String>>) {
+        val encoded = apps.map { (label, pkg) -> "$label|$pkg" }.toSet()
+        prefs.edit().putStringSet(KEY_SELECTED_APPS, encoded).apply()
+    }
+
     private fun buildLauncherPane(): LinearLayout {
-        val rawApps = listOf(
-            "Voice Note" to "com.voicenotes.main",
-            "Ridelink" to "otp.systems.ridelink",
-            "Cardo Connect" to "com.cardo.smartset",
-            "Sena +Mesh" to "com.sena.plusmesh",
-            "Telegram" to "org.telegram.messenger",
-            "WhatsApp" to "com.whatsapp",
-            "Discord" to "com.discord",
-            "Blitzer.de" to "de.blitzer.plus",
-            "MeteoBlue" to "com.meteoblue.droid",
-            "PACE Drive" to "car.pace.drive",
-            "ryd" to "com.thinxnet.native_tanktaler_android",
-            "Google Drive" to "com.google.android.apps.docs",
-            "Google Photos" to "com.google.android.apps.photos",
-            "Google Maps" to "com.google.android.apps.maps",
-            "DMD2" to "com.thorkracing.dmd2launcher"
-        )
-
-        appEntries.clear()
-        appEntries.addAll(rawApps.map { (label, pkg) ->
-            AppEntry(label, pkg, packageManager.getLaunchIntentForPackage(pkg) != null)
-        })
-
-        appListIndex = 0
-        appButtonViews.clear()
-
-        val container = LinearLayout(this).apply {
+        val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        appEntries.forEachIndexed { i, entry ->
-            val btn = buildAppButton(entry, i == 0)
-            appButtonViews.add(btn)
-            container.addView(btn)
-        }
-
-        appScrollView = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
-            addView(container)
-        }
-
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
             isClickable = true
             setOnTouchListener(makePaneSwipeListener())
-            addView(appScrollView)
         }
+        launcherPane = pane
+        showAppsView()
+        return pane
+    }
+
+    private fun showAppsView() {
+        val pane = launcherPane ?: return
+        pane.removeAllViews()
+
+        appEntries.clear()
+        appEntries.addAll(loadSelectedApps().map { (label, pkg) ->
+            AppEntry(label, pkg, packageManager.getLaunchIntentForPackage(pkg) != null)
+        })
+        appListIndex = 0
+        appButtonViews.clear()
+
+        val buttonList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        appEntries.forEachIndexed { i, entry ->
+            val btn = buildAppButton(entry, i == 0)
+            appButtonViews.add(btn)
+            buttonList.addView(btn)
+        }
+
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+            addView(buttonList)
+        }
+        appScrollView = scrollView
+
+        val configureBtn = TextView(this).apply {
+            text = "Configure"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(secondaryText)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(inactiveBg)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            setOnClickListener { showConfigureView() }
+        }
+
+        pane.addView(scrollView)
+        pane.addView(configureBtn)
+    }
+
+    private fun showConfigureView() {
+        val pane = launcherPane ?: return
+        pane.removeAllViews()
+
+        val selectedPkgs = loadSelectedApps().map { it.second }.toSet()
+
+        val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val installedApps = packageManager.queryIntentActivities(launchIntent, 0)
+            .map { ri ->
+                ri.activityInfo.applicationInfo.packageName to
+                        ri.loadLabel(packageManager).toString()
+            }
+            .distinctBy { it.first }
+            .sortedWith(compareByDescending<Pair<String, String>> { it.first in selectedPkgs }
+                .thenBy { it.second })
+
+        // Track checked state per package
+        val checkedState = mutableMapOf<String, Boolean>()
+        installedApps.forEach { (pkg, _) -> checkedState[pkg] = pkg in selectedPkgs }
+
+        val rowContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        fun makeCheckbox(checked: Boolean): View {
+            return View(this).apply {
+                val size = 24.dp()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    rightMargin = 12.dp()
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 4.dp().toFloat()
+                    if (checked) {
+                        setColor(primaryColor)
+                    } else {
+                        setColor(Color.TRANSPARENT)
+                        setStroke(2.dp(), secondaryText)
+                    }
+                }
+            }
+        }
+
+        installedApps.forEach { (pkg, label) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 2.dp() }
+
+                val checkbox = makeCheckbox(checkedState[pkg] == true)
+                addView(checkbox)
+
+                addView(TextView(this@OverlayService).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(Color.WHITE)
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                })
+
+                setOnClickListener {
+                    val nowChecked = !(checkedState[pkg] ?: false)
+                    checkedState[pkg] = nowChecked
+                    checkbox.background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 4.dp().toFloat()
+                        if (nowChecked) {
+                            setColor(primaryColor)
+                        } else {
+                            setColor(Color.TRANSPARENT)
+                            setStroke(2.dp(), secondaryText)
+                        }
+                    }
+                }
+            }
+            rowContainer.addView(row)
+        }
+
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+            addView(rowContainer)
+        }
+
+        val saveBtn = TextView(this).apply {
+            text = "Save"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(primaryColor)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            setOnClickListener {
+                val selected = installedApps
+                    .filter { (pkg, _) -> checkedState[pkg] == true }
+                    .map { (pkg, label) -> label to pkg }
+                saveSelectedApps(selected)
+                showAppsView()
+            }
+        }
+
+        pane.addView(scrollView)
+        pane.addView(saveBtn)
     }
 
     private fun buildAppButton(entry: AppEntry, isFocused: Boolean): LinearLayout {
