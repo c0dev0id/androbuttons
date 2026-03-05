@@ -628,8 +628,20 @@ class OverlayService : Service() {
             )
             isClickable = true
             setOnTouchListener(makePaneSwipeListener())
-
+            
+            addView(buildAppButton("Voice Note", "com.voicenotes.main"))
             addView(buildAppButton("Ridelink", "otp.systems.ridelink"))
+            addView(buildAppButton("Cardo Connect", "com.cardo.smartset"))
+            addView(buildAppButton("Sena +Mesh", "com.sena.plusmesh"))
+            addView(buildAppButton("Telegram", "org.telegram.messenger"))
+            addView(buildAppButton("WhatsApp", "com.whatsapp"))
+            addView(buildAppButton("Discord", "com.discord"))
+            addView(buildAppButton("Blitzer.de", "de.blitzer.plus"))
+            addView(buildAppButton("MeteoBlue", "com.meteoblue.droid"))
+            addView(buildAppButton("PACE Drive", "car.pace.drive"))
+            addView(buildAppButton("ryd", "com.thinxnet.native_tanktaler_android"))
+            addView(buildAppButton("Google Drive", "com.google.android.apps.docs"))
+            addView(buildAppButton("Google Photos", "com.google.android.apps.photos"))
         }
     }
 
