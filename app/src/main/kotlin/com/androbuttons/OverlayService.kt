@@ -40,6 +40,13 @@ import android.widget.TextView
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 
 class OverlayService : Service() {
 
@@ -64,6 +71,7 @@ class OverlayService : Service() {
         private const val SECONDARY_KEY_CANCEL = KeyEvent.KEYCODE_BUTTON_A
         private const val TARGET_PLAYER_PKG = "de.codevoid.androsnd"
         private const val KEY_SELECTED_APPS = "selected_apps"
+        private const val KEY_LEAN_CALIBRATION = "lean_cal_offset"
 
         var isRunning = false
     }
@@ -78,8 +86,8 @@ class OverlayService : Service() {
 
     // Pane state
     private var currentPane = 0
-    private val paneCount = 2
-    private val paneNames = arrayOf("Music", "Apps")
+    private val paneCount = 3
+    private val paneNames = arrayOf("Music", "Apps", "Sensors")
 
     // Media player state
     private var isPlaying = false
@@ -106,6 +114,13 @@ class OverlayService : Service() {
     private var appListIndex = 0
     private var appScrollView: ScrollView? = null
     private val appButtonViews = mutableListOf<LinearLayout>()
+
+    // Sensors pane state
+    private var compassView: CompassView? = null
+    private var speedometerView: SpeedometerView? = null
+    private var leanAngleView: LeanAngleView? = null
+    private var forceDisplayView: ForceDisplayView? = null
+    private var sensorCoordinator: SensorCoordinator? = null
 
     // Stored view references for direct updates (no full rebuild)
     private lateinit var viewFlipper: ViewFlipper
@@ -304,6 +319,7 @@ class OverlayService : Service() {
         seekHandler.removeCallbacks(seekUpdater)
         mediaController?.unregisterCallback(mediaControllerCallback)
         mediaBrowser?.disconnect()
+        stopSensorCoordinator()
         removeOverlay()
     }
 
@@ -498,6 +514,7 @@ class OverlayService : Service() {
         }
         viewFlipper.addView(buildMusicPane())
         viewFlipper.addView(buildLauncherPane())
+        viewFlipper.addView(buildSensorsPane())
         viewFlipper.displayedChild = currentPane
         return viewFlipper
     }
@@ -881,6 +898,187 @@ class OverlayService : Service() {
         pane.addView(saveBtn)
     }
 
+    // -------------------------------------------------------------------------
+    // Sensors pane
+    // -------------------------------------------------------------------------
+
+    private fun buildSensorsPane(): ScrollView {
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+        }
+
+        fun sectionHeader(title: String): TextView = TextView(this).apply {
+            text = title
+            textSize = 10f
+            setTextColor(tertiaryText)
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 4.dp() }
+        }
+
+        fun spacer(): Space = Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 8.dp()
+            )
+        }
+
+        // --- Compass ---
+        inner.addView(sectionHeader("COMPASS"))
+        compassView = CompassView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(compassView)
+        inner.addView(spacer())
+
+        // --- Speedometer ---
+        inner.addView(sectionHeader("SPEED"))
+        speedometerView = SpeedometerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(speedometerView)
+        inner.addView(spacer())
+
+        // --- Lean Angle ---
+        inner.addView(sectionHeader("LEAN"))
+        leanAngleView = LeanAngleView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(leanAngleView)
+
+        val calibrateBtn = TextView(this).apply {
+            text = "Calibrate"
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(secondaryText)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(inactiveBg)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 6.dp() }
+            setPadding(8.dp(), 14.dp(), 8.dp(), 14.dp())
+            setOnClickListener {
+                val raw = sensorCoordinator?.currentRollDeg ?: 0f
+                prefs.edit().putFloat(KEY_LEAN_CALIBRATION, raw).apply()
+                sensorCoordinator?.leanCalibrationOffset = raw
+            }
+        }
+        inner.addView(calibrateBtn)
+        inner.addView(spacer())
+
+        // --- G-Force ---
+        inner.addView(sectionHeader("G-FORCE"))
+        forceDisplayView = ForceDisplayView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(forceDisplayView)
+
+        return ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            isClickable = true
+            setOnTouchListener(makePaneSwipeListener())
+            addView(inner)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Sensor coordinator — starts/stops with the Sensors pane
+    // -------------------------------------------------------------------------
+
+    private inner class SensorCoordinator {
+        private val sensorMgr = getSystemService(SENSOR_SERVICE) as SensorManager
+        private val locationMgr = getSystemService(LOCATION_SERVICE) as LocationManager
+
+        var leanCalibrationOffset: Float = prefs.getFloat(KEY_LEAN_CALIBRATION, 0f)
+        var currentRollDeg: Float = 0f
+
+        private var gpsSpeedKmh: Float = 0f
+        private var gpsBearing: Float? = null
+
+        private val rotationMatrix    = FloatArray(9)
+        private val orientationAngles = FloatArray(3)
+
+        private val sensorListener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                when (event.sensor.type) {
+                    Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                        SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                        val azimuthDeg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
+                        val rollDeg    = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
+                        currentRollDeg = rollDeg
+                        val heading = if (gpsSpeedKmh > 5f && gpsBearing != null) gpsBearing!! else azimuthDeg
+                        compassView?.setAzimuth(heading)
+                        leanAngleView?.setLeanDegrees(rollDeg - leanCalibrationOffset)
+                    }
+                    Sensor.TYPE_LINEAR_ACCELERATION -> {
+                        forceDisplayView?.setForce(event.values[0], event.values[1])
+                    }
+                }
+            }
+            override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+        }
+
+        private val locationListener = LocationListener { location: Location ->
+            gpsSpeedKmh = location.speed * 3.6f
+            gpsBearing  = if (location.hasBearing()) location.bearing else null
+            speedometerView?.setSpeedKmh(gpsSpeedKmh)
+        }
+
+        fun start() {
+            sensorMgr.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+                sensorMgr.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)
+            }
+            sensorMgr.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)?.let {
+                sensorMgr.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)
+            }
+            try {
+                locationMgr.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, 500L, 0f, locationListener
+                )
+            } catch (_: SecurityException) { /* GPS permission denied — degrade gracefully */ }
+        }
+
+        fun stop() {
+            sensorMgr.unregisterListener(sensorListener)
+            try { locationMgr.removeUpdates(locationListener) } catch (_: Exception) {}
+        }
+    }
+
+    private fun startSensorCoordinator() {
+        if (sensorCoordinator == null) {
+            sensorCoordinator = SensorCoordinator()
+            sensorCoordinator!!.start()
+        }
+    }
+
+    private fun stopSensorCoordinator() {
+        sensorCoordinator?.stop()
+        sensorCoordinator = null
+    }
+
     private fun buildAppButton(entry: AppEntry, isFocused: Boolean): LinearLayout {
         val icon = try { packageManager.getApplicationIcon(entry.packageName) } catch (e: Exception) { null }
         return LinearLayout(this).apply {
@@ -1152,11 +1350,13 @@ class OverlayService : Service() {
                     viewFlipper.showNext()
                     refreshTitleBar()
                     if (currentPane == 1) { appListIndex = 0; refreshAppList() }
+                    else if (currentPane == 2) startSensorCoordinator()
                 }
                 true
             }
             leftKey -> {
                 if (currentPane > 0) {
+                    if (currentPane == 2) stopSensorCoordinator()
                     viewFlipper.inAnimation  = slideIn(fromRight = false)
                     viewFlipper.outAnimation = slideOut(toLeft = false)
                     currentPane--
@@ -1255,10 +1455,12 @@ class OverlayService : Service() {
                             currentPane++
                             viewFlipper.showNext()
                             refreshTitleBar()
+                            if (currentPane == 2) startSensorCoordinator()
                         }
                     } else {
                         // Swipe right → previous pane
                         if (currentPane > 0) {
+                            if (currentPane == 2) stopSensorCoordinator()
                             viewFlipper.inAnimation = slideIn(fromRight = false)
                             viewFlipper.outAnimation = slideOut(toLeft = false)
                             currentPane--

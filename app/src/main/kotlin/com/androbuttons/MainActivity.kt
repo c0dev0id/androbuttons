@@ -25,6 +25,12 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
     }
 
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        checkAndRequestPermissions()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRequestPermissions()
@@ -45,6 +51,14 @@ class MainActivity : AppCompatActivity() {
             overlayPermissionLauncher.launch(
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             )
+            return
+        }
+
+        // Stage 3: Location (needed for GPS speedometer and compass bearing)
+        val fineLocation = Manifest.permission.ACCESS_FINE_LOCATION
+        val coarseLocation = Manifest.permission.ACCESS_COARSE_LOCATION
+        if (ContextCompat.checkSelfPermission(this, fineLocation) != PackageManager.PERMISSION_GRANTED) {
+            locationPermissionLauncher.launch(arrayOf(fineLocation, coarseLocation))
             return
         }
 
