@@ -894,7 +894,7 @@ class OverlayService : Service() {
 
         appEntries.clear()
         appEntries.addAll(loadSelectedApps().map { (label, pkg) ->
-            AppEntry(label, pkg, packageManager.getLaunchIntentForPackage(pkg) != null)
+            AppEntry(label, pkg, true)
         })
         appListIndex = 0
         appButtonViews.clear()
