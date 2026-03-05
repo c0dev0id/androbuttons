@@ -7,11 +7,27 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Android 11+ package visibility: allow querying MediaBrowserService implementations -->
+    <!-- and all app launcher targets listed in the Apps pane -->
     <queries>
         <package android:name="de.codevoid.androsnd" />
         <intent>
             <action android:name="android.media.browse.MediaBrowserService" />
         </intent>
+        <package android:name="com.voicenotes.main" />
+        <package android:name="otp.systems.ridelink" />
+        <package android:name="com.cardo.smartset" />
+        <package android:name="com.sena.plusmesh" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.discord" />
+        <package android:name="de.blitzer.plus" />
+        <package android:name="com.meteoblue.droid" />
+        <package android:name="car.pace.drive" />
+        <package android:name="com.thinxnet.native_tanktaler_android" />
+        <package android:name="com.google.android.apps.docs" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.thorkracing.dmd2launcher" />
     </queries>
 
     <application
