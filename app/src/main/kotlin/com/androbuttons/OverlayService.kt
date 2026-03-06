@@ -205,7 +205,7 @@ class OverlayService : Service(), ServiceBridge {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.OPAQUE
+            PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.END or Gravity.TOP
             x = 0; y = visibleStatusBarHeight
@@ -236,12 +236,14 @@ class OverlayService : Service(), ServiceBridge {
     private fun buildRootView(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(Theme.surface)
-                setStroke(2.dp(), Theme.primary)
-            }
-            elevation = 12.dp().toFloat()
+            // No padding — header bar fills edge-to-edge; content padding applied inside sections
+            // Semi-transparent (~90% opacity) so the underlying app bleeds through
+            // Left side rounded, right side flush against the screen edge
+            background = createLeftRoundedBackground(
+                color = Theme.surface and 0x00FFFFFF or (230 shl 24),
+                radiusDp = 16
+            )
+            elevation = 8.dp().toFloat()
             clipToOutline = true
         }
         container.addView(buildTitleBar())
@@ -451,4 +453,19 @@ class OverlayService : Service(), ServiceBridge {
         .setSmallIcon(android.R.drawable.ic_menu_compass)
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
+
+    private fun createLeftRoundedBackground(
+        color: Int,
+        radiusDp: Int,
+        strokeWidthDp: Int = 0,
+        strokeColor: Int = Color.TRANSPARENT
+    ): GradientDrawable {
+        val r = radiusDp.dp().toFloat()
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+            setColor(color)
+            if (strokeWidthDp > 0) setStroke(strokeWidthDp.dp(), strokeColor)
+        }
+    }
 }

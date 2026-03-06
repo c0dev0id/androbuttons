@@ -1,7 +1,9 @@
 package com.androbuttons.panes.sensors
 
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -21,8 +23,6 @@ import com.androbuttons.LeanAngleView
 import com.androbuttons.SpeedometerView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
-import com.androbuttons.common.Theme
-import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.dpWith
 
 class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
@@ -56,10 +56,10 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
 
         fun sectionHeader(text: String) = TextView(ctx).apply {
             this.text = text
-            textSize = 10f
-            setTextColor(Theme.textTertiary)
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.1f
+            textSize = 9f
+            setTextColor(Color.parseColor("#F57C00"))
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            letterSpacing = 0.2f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -138,16 +138,21 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         inner.addView(leanAngleView)
 
         inner.addView(TextView(ctx).apply {
-            text = "Calibrate"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
+            text = "CALIBRATE"
+            textSize = 12f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setTextColor(Theme.textSecondary)
-            background = actionButtonBg(Theme.inactiveBg, ctx)
+            setTextColor(Color.parseColor("#F57C00"))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 24.dp().toFloat()
+                setColor(Color.parseColor("#1A1A1A"))
+                setStroke(2.dp(), Color.parseColor("#F57C00"))
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 6.dp() }
+            ).apply { topMargin = 8.dp() }
             setPadding(8.dp(), 14.dp(), 8.dp(), 14.dp())
             isClickable = true
             setOnClickListener {
