@@ -717,3 +717,106 @@ class ForceDisplayView(context: Context) : View(context) {
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
     )
 }
+
+// ---------------------------------------------------------------------------
+// GpsInfoView
+//
+// Split instrument panel: three equal columns showing GPS satellite count,
+// position accuracy, and location update rate.  Fixed 50dp height to match
+// LeanAngleView.
+// ---------------------------------------------------------------------------
+class GpsInfoView(context: Context) : View(context) {
+
+    private var satellites:   Int   = 0
+    private var accuracyM:    Float = 0f
+    private var updateRateHz: Float = 0f
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#0D0D0D")
+        style = Paint.Style.FILL
+    }
+    private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+    }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        textSize = sp(8f)
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.MONOSPACE
+        isFakeBoldText = true
+    }
+    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = sp(18f)
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+    }
+    private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        textSize = sp(8f)
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+
+    fun update(satellites: Int, accuracyM: Float, updateRateHz: Float) {
+        this.satellites   = satellites
+        this.accuracyM    = accuracyM
+        this.updateRateHz = updateRateHz
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        setMeasuredDimension(w, dp(50f).toInt())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w  = width.toFloat()
+        val h  = height.toFloat()
+        val colW = w / 3f
+
+        // Background
+        canvas.drawRoundRect(0f, 0f, w, h, dp(4f), dp(4f), bgPaint)
+
+        // Vertical dividers
+        canvas.drawLine(colW,       dp(6f), colW,       h - dp(6f), dividerPaint)
+        canvas.drawLine(colW * 2f,  dp(6f), colW * 2f,  h - dp(6f), dividerPaint)
+
+        // Column data: label, value string, unit string
+        data class ColData(val label: String, val value: String, val unit: String)
+        val cols = listOf(
+            ColData("SAT", satellites.toString(),            ""),
+            ColData("ACC", "%.1f".format(accuracyM),         "m"),
+            ColData("HZ",  "%.1f".format(updateRateHz),      "Hz")
+        )
+
+        for ((i, col) in cols.withIndex()) {
+            val cx = colW * i + colW / 2f
+
+            // Label — near top
+            val labelY = dp(10f) - (labelPaint.ascent())
+            canvas.drawText(col.label, cx, labelY, labelPaint)
+
+            // Value — vertically centred
+            val valueVCenter = (valuePaint.descent() + valuePaint.ascent()) / 2f
+            val valueY = h / 2f - valueVCenter + dp(2f)
+            canvas.drawText(col.value, cx, valueY, valuePaint)
+
+            // Unit — near bottom (only when non-empty)
+            if (col.unit.isNotEmpty()) {
+                val unitY = h - dp(4f)
+                canvas.drawText(col.unit, cx, unitY, unitPaint)
+            }
+        }
+    }
+
+    private fun dp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
+    )
+
+    private fun sp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics
+    )
+}

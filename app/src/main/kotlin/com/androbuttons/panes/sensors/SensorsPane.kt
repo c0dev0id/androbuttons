@@ -8,9 +8,12 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
@@ -20,6 +23,7 @@ import android.widget.TextView
 import com.androbuttons.AltimeterView
 import com.androbuttons.CompassView
 import com.androbuttons.ForceDisplayView
+import com.androbuttons.GpsInfoView
 import com.androbuttons.LeanAngleView
 import com.androbuttons.SpeedometerView
 import com.androbuttons.common.PaneContent
@@ -43,6 +47,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
     private var altimeterView: AltimeterView? = null
     private var leanAngleView: LeanAngleView? = null
     private var forceDisplayView: ForceDisplayView? = null
+    private var gpsInfoView: GpsInfoView? = null
 
     private var coordinator: SensorCoordinator? = null
 
@@ -197,6 +202,18 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             }
         })
 
+        inner.addView(spacer())
+
+        // --- GPS Info ---
+        inner.addView(sectionHeader("GPS"))
+        gpsInfoView = GpsInfoView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(gpsInfoView)
+
         // Start sensors immediately so data is ready whenever the user arrives
         startCoordinator()
 
@@ -248,6 +265,11 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         private var gpsSpeedKmh: Float  = 0f
         private var gpsBearing:  Float? = null
 
+        private var gpsSatellites:   Int   = 0
+        private var gpsAccuracyM:    Float = 0f
+        private var gpsUpdateRateHz: Float = 0f
+        private var lastLocationTimeMs: Long = 0L
+
         private var stillnessStartMs: Long = 0L
         private var lastLinearAccelMagnitude: Float = 0f
 
@@ -298,11 +320,27 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
         }
 
+        private val gnssCallback = object : GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
+                gpsSatellites = status.satelliteCount
+                gpsInfoView?.update(gpsSatellites, gpsAccuracyM, gpsUpdateRateHz)
+            }
+        }
+
         private val locationListener = LocationListener { location: Location ->
             gpsSpeedKmh = location.speed * 3.6f
             gpsBearing  = if (location.hasBearing()) location.bearing else null
             speedometerView?.setSpeedKmh(gpsSpeedKmh)
             if (location.hasAltitude()) altimeterView?.setAltitudeM(location.altitude.toFloat())
+
+            if (location.hasAccuracy()) gpsAccuracyM = location.accuracy
+            val now = System.currentTimeMillis()
+            if (lastLocationTimeMs > 0L) {
+                val deltaMs = now - lastLocationTimeMs
+                if (deltaMs > 0) gpsUpdateRateHz = 1000f / deltaMs
+            }
+            lastLocationTimeMs = now
+            gpsInfoView?.update(gpsSatellites, gpsAccuracyM, gpsUpdateRateHz)
         }
 
         fun start() {
@@ -314,12 +352,16 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             }
             try {
                 locationMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, locationListener)
+                locationMgr.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
             } catch (_: SecurityException) { /* GPS permission denied — degrade gracefully */ }
         }
 
         fun stop() {
             sensorMgr.unregisterListener(sensorListener)
-            try { locationMgr.removeUpdates(locationListener) } catch (_: Exception) {}
+            try {
+                locationMgr.removeUpdates(locationListener)
+                locationMgr.unregisterGnssStatusCallback(gnssCallback)
+            } catch (_: Exception) {}
         }
     }
 }
