@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
+import com.androbuttons.common.LeatherDrawable
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
@@ -240,13 +241,14 @@ class OverlayService : Service(), ServiceBridge {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // No padding — header bar fills edge-to-edge; content padding applied inside sections
-            // Semi-transparent (~90% opacity) so the underlying app bleeds through
-            // Left side rounded, right side flush against the screen edge
-            background = createLeftRoundedBackground(
-                color = Theme.surface and 0x00FFFFFF or (230 shl 24),
-                radiusDp = 16
+            // Fully opaque leather panel — left side rounded, right side flush against screen edge
+            val r = 16.dp().toFloat()
+            background = LeatherDrawable(
+                baseColor = Theme.surface,
+                radiiPx = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r),
+                edgeGradientWidthPx = 22.dp()
             )
-            elevation = 8.dp().toFloat()
+            elevation = 20.dp().toFloat()
             clipToOutline = true
         }
         container.addView(buildTitleBar())
