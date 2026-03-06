@@ -177,6 +177,18 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         }
         inner.addView(leanAngleView)
 
+        inner.addView(spacer())
+
+        // --- GPS Info ---
+        inner.addView(sectionHeader("GPS"))
+        gpsInfoView = GpsInfoView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        inner.addView(gpsInfoView)
+
         inner.addView(TextView(ctx).apply {
             text = "CALIBRATE"
             textSize = 12f
@@ -201,18 +213,6 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 coordinator?.leanCalibrationOffset = raw
             }
         })
-
-        inner.addView(spacer())
-
-        // --- GPS Info ---
-        inner.addView(sectionHeader("GPS"))
-        gpsInfoView = GpsInfoView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        inner.addView(gpsInfoView)
 
         // Start sensors immediately so data is ready whenever the user arrives
         startCoordinator()
