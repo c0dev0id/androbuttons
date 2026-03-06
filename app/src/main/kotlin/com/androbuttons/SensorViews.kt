@@ -762,7 +762,7 @@ class GpsInfoView(context: Context) : View(context) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(w, dp(50f).toInt())
+        setMeasuredDimension(w, dp(60f).toInt())
     }
 
     override fun onDraw(canvas: Canvas) {
