@@ -267,18 +267,28 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     // ---- Intent construction ------------------------------------------------
 
     private fun sendGpxUri(uri: Uri) {
+        val baseIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, GPX_MIME)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        // Try system-default resolution first (respects user's "Always" choice)
+        val resolved = ctx.packageManager.resolveActivity(baseIntent, 0)
+        if (resolved != null) {
+            ctx.startActivity(baseIntent.apply { setPackage(resolved.activityInfo.packageName) })
+            return
+        }
+
+        // Fallback: try known nav packages explicitly
         for (pkg in NAV_PACKAGES) {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, GPX_MIME)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                setPackage(pkg)
-            }
+            val intent = Intent(baseIntent).apply { setPackage(pkg) }
             if (intent.resolveActivity(ctx.packageManager) != null) {
                 ctx.startActivity(intent)
                 return
             }
         }
+
         showGpsError()
     }
 
