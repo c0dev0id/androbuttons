@@ -1204,6 +1204,12 @@ class OverlayService : Service() {
         private var gpsSpeedKmh: Float = 0f
         private var gpsBearing: Float? = null
 
+        private var stillnessStartMs: Long = 0L
+        private var lastLinearAccelMagnitude: Float = 0f
+        private val AUTOLEVEL_STILL_THRESHOLD_G  = 0.07f
+        private val AUTOLEVEL_STILL_DURATION_MS  = 1500L
+        private val AUTOLEVEL_SPEED_THRESHOLD_KMH = 5f
+
         private val rotationMatrix    = FloatArray(9)
         private val orientationAngles = FloatArray(3)
 
@@ -1218,10 +1224,30 @@ class OverlayService : Service() {
                         currentRollDeg = rollDeg
                         val heading = if (gpsSpeedKmh > 5f && gpsBearing != null) gpsBearing!! else azimuthDeg
                         compassView?.setAzimuth(heading)
+
+                        val now = System.currentTimeMillis()
+                        val isStill = lastLinearAccelMagnitude < AUTOLEVEL_STILL_THRESHOLD_G
+                        val isSlow  = gpsSpeedKmh < AUTOLEVEL_SPEED_THRESHOLD_KMH
+                        if (isStill && isSlow) {
+                            if (stillnessStartMs == 0L) {
+                                stillnessStartMs = now
+                            } else if (now - stillnessStartMs >= AUTOLEVEL_STILL_DURATION_MS) {
+                                leanCalibrationOffset = rollDeg
+                                prefs.edit().putFloat(KEY_LEAN_CALIBRATION, leanCalibrationOffset).apply()
+                                stillnessStartMs = 0L
+                            }
+                        } else {
+                            stillnessStartMs = 0L
+                        }
+
                         leanAngleView?.setLeanDegrees(rollDeg - leanCalibrationOffset)
                     }
                     Sensor.TYPE_LINEAR_ACCELERATION -> {
-                        forceDisplayView?.setForce(event.values[0], event.values[1])
+                        val ax = event.values[0]
+                        val ay = event.values[1]
+                        val az = event.values[2]
+                        forceDisplayView?.setForce(ax, ay)
+                        lastLinearAccelMagnitude = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
                     }
                 }
             }
