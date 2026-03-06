@@ -108,7 +108,7 @@ class OverlayService : Service(), ServiceBridge {
         } else navBarHeight
 
     private val overlayWidth: Int
-        get() = (resources.displayMetrics.widthPixels * 0.25f).toInt()
+        get() = (resources.displayMetrics.widthPixels * (1f / 3f)).toInt()
 
     private val overlayHeight: Int
         get() {
