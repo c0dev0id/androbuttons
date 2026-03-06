@@ -1,5 +1,6 @@
 package com.androbuttons.panes.markers
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -276,16 +277,20 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         // Try system-default resolution first (respects user's "Always" choice)
         val resolved = ctx.packageManager.resolveActivity(baseIntent, 0)
         if (resolved != null) {
-            ctx.startActivity(baseIntent.apply { setPackage(resolved.activityInfo.packageName) })
-            return
+            try {
+                ctx.startActivity(Intent(baseIntent).apply { setPackage(resolved.activityInfo.packageName) })
+                return
+            } catch (_: ActivityNotFoundException) { /* fall through to NAV_PACKAGES */ }
         }
 
         // Fallback: try known nav packages explicitly
         for (pkg in NAV_PACKAGES) {
             val intent = Intent(baseIntent).apply { setPackage(pkg) }
             if (intent.resolveActivity(ctx.packageManager) != null) {
-                ctx.startActivity(intent)
-                return
+                try {
+                    ctx.startActivity(intent)
+                    return
+                } catch (_: ActivityNotFoundException) { /* try next */ }
             }
         }
 
