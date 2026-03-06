@@ -181,6 +181,7 @@ class SpeedometerView(context: Context) : View(context) {
 
     private var displayedSpeedKmh: Float = 0f
     private var speedAnimator: ValueAnimator? = null
+    private var lastSpeedUpdateMs: Long = 0L
 
     private val MAX_SPEED   = 170f
     private val START_ANGLE = 140f
@@ -246,15 +247,26 @@ class SpeedometerView(context: Context) : View(context) {
 
     fun setSpeedKmh(speed: Float) {
         val target = speed.coerceAtLeast(0f)
+        val now = SystemClock.uptimeMillis()
+        val intervalMs = if (lastSpeedUpdateMs == 0L) 0L else now - lastSpeedUpdateMs
+        lastSpeedUpdateMs = now
+
         speedAnimator?.cancel()
-        speedAnimator = ValueAnimator.ofFloat(displayedSpeedKmh, target).apply {
-            duration = 900L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { anim ->
-                displayedSpeedKmh = anim.animatedValue as Float
-                invalidate()
+        if (intervalMs < 200L) {
+            // GPS is updating fast enough to already feel smooth — snap directly.
+            displayedSpeedKmh = target
+            invalidate()
+        } else {
+            val animDuration = intervalMs.coerceAtMost(1000L)
+            speedAnimator = ValueAnimator.ofFloat(displayedSpeedKmh, target).apply {
+                duration = animDuration
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    displayedSpeedKmh = anim.animatedValue as Float
+                    invalidate()
+                }
+                start()
             }
-            start()
         }
     }
 
