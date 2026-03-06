@@ -221,6 +221,8 @@ class OverlayService : Service() {
             val metadata = mediaController?.metadata
             currentlyPlayingMediaId = metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)
             updateNowPlaying(metadata)
+            refreshTrackList()
+            scrollToPlaying()
             val state = mediaController?.playbackState
             val playing = state?.state == PlaybackStateCompat.STATE_PLAYING
             isPlaying = playing
@@ -1736,7 +1738,7 @@ class OverlayService : Service() {
                     currentPane--
                     viewFlipper.showPrevious()
                     refreshTitleBar()
-                    if (currentPane == 0) { musicFocus = MusicFocus.BUTTON; refreshMusicFocus() }
+                    if (currentPane == 0) { musicFocus = MusicFocus.BUTTON; refreshMusicFocus(); scrollToPlaying() }
                 }
                 true
             }
@@ -1784,7 +1786,18 @@ class OverlayService : Service() {
                 if (currentPane == 0) {
                     when (musicFocus) {
                         MusicFocus.BUTTON -> playPauseButton?.performClick()
-                        MusicFocus.LIST -> { musicFocus = MusicFocus.LIST_ENTRY; refreshMusicFocus() }
+                        MusicFocus.LIST -> {
+                            musicFocus = MusicFocus.LIST_ENTRY
+                            val playingIdx = currentlyPlayingMediaId?.let { id ->
+                                trackList.indexOfFirst { it.mediaId == id }
+                            } ?: -1
+                            if (playingIdx >= 0) {
+                                musicListIndex = playingIdx
+                                ensureIndexInWindow(playingIdx)
+                            }
+                            refreshMusicFocus()
+                            scrollToSelected()
+                        }
                         MusicFocus.LIST_ENTRY -> {
                             if (trackList.isNotEmpty()) {
                                 mediaController?.transportControls
