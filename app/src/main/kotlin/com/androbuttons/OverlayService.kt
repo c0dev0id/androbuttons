@@ -453,4 +453,19 @@ class OverlayService : Service(), ServiceBridge {
         .setSmallIcon(android.R.drawable.ic_menu_compass)
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
+
+    private fun createLeftRoundedBackground(
+        color: Int,
+        radiusDp: Int,
+        strokeWidthDp: Int = 0,
+        strokeColor: Int = Color.TRANSPARENT
+    ): GradientDrawable {
+        val r = radiusDp.dp().toFloat()
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+            setColor(color)
+            if (strokeWidthDp > 0) setStroke(strokeWidthDp.dp(), strokeColor)
+        }
+    }
 }
