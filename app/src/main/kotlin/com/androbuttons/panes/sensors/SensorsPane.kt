@@ -273,7 +273,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         private var stillnessStartMs: Long = 0L
         private var lastLinearAccelMagnitude: Float = 0f
 
-        private val AUTOLEVEL_STILL_THRESHOLD_G   = 0.07f
+        private val AUTOLEVEL_STILL_THRESHOLD_MS2 = 0.70f   // ≈ 0.07 g
         private val AUTOLEVEL_STILL_DURATION_MS   = 1500L
         private val AUTOLEVEL_SPEED_THRESHOLD_KMH = 5f
 
@@ -304,7 +304,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
 
                         // Auto-level: if still and slow for long enough, re-zero the lean offset
                         val now = System.currentTimeMillis()
-                        val isStill = lastLinearAccelMagnitude < AUTOLEVEL_STILL_THRESHOLD_G
+                        val isStill = lastLinearAccelMagnitude < AUTOLEVEL_STILL_THRESHOLD_MS2
                         val isSlow  = gpsSpeedKmh < AUTOLEVEL_SPEED_THRESHOLD_KMH
                         if (isStill && isSlow) {
                             if (stillnessStartMs == 0L) stillnessStartMs = now
