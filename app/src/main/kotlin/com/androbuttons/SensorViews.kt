@@ -782,7 +782,7 @@ class GpsInfoView(context: Context) : View(context) {
         val cols = listOf(
             ColData("SAT",  satellites.toString(),         ""),
             ColData("ACC",  "%.1fm".format(accuracyM),     ""),
-            ColData("RATE", "%.1fHz".format(updateRateHz), "")
+            ColData("RATE", "%dHz".format(updateRateHz.toInt()), "")
         )
 
         for ((i, col) in cols.withIndex()) {

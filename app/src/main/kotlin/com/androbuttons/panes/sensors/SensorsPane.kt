@@ -342,7 +342,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             speedometerView?.setSpeedKmh(gpsSpeedKmh)
             if (location.hasAltitude()) altimeterView?.setAltitudeM(location.altitude.toFloat())
 
-            if (location.hasAccuracy()) gpsAccuracyM = location.accuracy
+            gpsAccuracyM = location.accuracy
             val now = System.currentTimeMillis()
             if (lastLocationTimeMs > 0L) {
                 val deltaMs = now - lastLocationTimeMs
