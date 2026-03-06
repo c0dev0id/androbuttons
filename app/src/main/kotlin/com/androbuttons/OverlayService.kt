@@ -614,10 +614,9 @@ class OverlayService : Service() {
             dot.layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 marginStart = 3.dp(); marginEnd = 3.dp()
             }
-            dot.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(if (active) primaryColor else inactiveBg)
-            }
+            (dot.background as? GradientDrawable)?.setColor(
+                if (active) primaryColor else inactiveBg
+            )
         }
     }
 
