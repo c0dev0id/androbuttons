@@ -193,7 +193,11 @@ class OverlayService : Service() {
 
     private val overlayHeight: Int
         get() {
-            val screenH = resources.displayMetrics.heightPixels
+            val screenH = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                windowManager.currentWindowMetrics.bounds.height()
+            } else {
+                resources.displayMetrics.heightPixels
+            }
             return screenH - visibleStatusBarHeight - visibleNavBarHeight
         }
 
