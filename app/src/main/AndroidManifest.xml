@@ -30,6 +30,9 @@
         <package android:name="com.google.android.apps.photos" />
         <package android:name="com.google.android.apps.maps" />
         <package android:name="com.thorkracing.dmd2launcher" />
+        <package android:name="oid.hardware.bluetooth_le" />
+        <package android:name="com.thorkracing.dmdLora" />
+        <package android:name="cs.builder.app.scenic.dev" />
     </queries>
 
     <application
