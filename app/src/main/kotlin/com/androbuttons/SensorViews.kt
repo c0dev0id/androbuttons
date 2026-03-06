@@ -400,7 +400,8 @@ class ForceDisplayView(context: Context) : View(context) {
         val cy = h / 2f
 
         // Background
-        canvas.drawRect(0f, 0f, w, h, bgPaint)
+        val r = dp(8f)
+        canvas.drawRoundRect(0f, 0f, w, h, r, r, bgPaint)
 
         // Dot grid
         val gridSpacing = dp(12f)
