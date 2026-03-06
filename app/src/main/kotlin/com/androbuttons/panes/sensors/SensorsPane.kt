@@ -287,7 +287,16 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                         SensorManager.getOrientation(rotationMatrix, orientationAngles)
                         val azimuthDeg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                        val rollDeg    = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
+                        // Extract gravity vector in device frame (negated third column of rotation matrix).
+                        // Using atan2(gx, hypot(gy,gz)) gives the lean angle around the device X axis
+                        // independently of how much the device is pitched towards the rider, so the
+                        // formula works correctly in handlebar and windshield mounts at any tilt angle.
+                        val gx = -rotationMatrix[6]
+                        val gy = -rotationMatrix[7]
+                        val gz = -rotationMatrix[8]
+                        val rollDeg = Math.toDegrees(
+                            Math.atan2(gx.toDouble(), Math.sqrt((gy * gy + gz * gz).toDouble()))
+                        ).toFloat()
                         currentRollDeg = rollDeg
 
                         val heading = if (gpsSpeedKmh > 5f && gpsBearing != null) gpsBearing!! else azimuthDeg
