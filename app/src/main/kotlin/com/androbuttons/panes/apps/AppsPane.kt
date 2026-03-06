@@ -266,7 +266,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                     sortingMode = true
                     sortDragIndex = index
                     this@apply.background = buttonBg(true, ctx)
-                    this@apply.parent?.requestDisallowInterceptTouchEvent(true)
+                    appScrollView?.requestDisallowInterceptTouchEvent(true)
                 }
             })
 
@@ -285,7 +285,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             sortingMode = false; sortDragIndex = -1
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                            appScrollView?.requestDisallowInterceptTouchEvent(false)
                             saveSelectedApps(appEntries.map { it.label to it.packageName })
                             refreshAppList()
                         }
