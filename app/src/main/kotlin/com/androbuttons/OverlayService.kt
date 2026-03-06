@@ -39,6 +39,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
+import android.widget.ProgressBar
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -260,6 +261,7 @@ class OverlayService : Service() {
         }
         override fun onConnectionFailed() {
             android.util.Log.w("androbuttons", "MediaBrowser connection failed: ${mediaBrowser?.serviceComponent}")
+            if (trackList.isEmpty()) rebuildTrackList()
         }
         override fun onConnectionSuspended() {
             android.util.Log.w("androbuttons", "MediaBrowser connection suspended")
@@ -468,11 +470,15 @@ class OverlayService : Service() {
     }
 
     private fun connectMedia() {
-        val component = findMediaBrowserComponent(TARGET_PLAYER_PKG) ?: return
+        val component = findMediaBrowserComponent(TARGET_PLAYER_PKG)
         // Show cached playlist immediately while the live connection loads
         if (loadPlaylistCache()) {
             rebuildTrackList()
+        } else if (component == null) {
+            // Player app not found and no cached playlist – replace spinner with "No tracks"
+            rebuildTrackList()
         }
+        component ?: return
         mediaBrowser?.disconnect()
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
         mediaBrowser!!.connect()
@@ -783,16 +789,17 @@ class OverlayService : Service() {
 
         pane.addView(playlistContainerView)
 
-        // Placeholder when no tracks loaded
-        trackListContainer!!.addView(TextView(this).apply {
-            text = "No tracks"
-            textSize = 12f
-            setTextColor(tertiaryText)
-            gravity = Gravity.CENTER
+        // Loading spinner (replaced by tracks or "No tracks" once the playlist arrives)
+        trackListContainer!!.addView(ProgressBar(this).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(primaryColor)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 16.dp() }
+            ).apply {
+                topMargin = 16.dp()
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
         })
 
         return pane
