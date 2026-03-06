@@ -37,7 +37,12 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     private companion object {
         val MARKER_LABELS = listOf("Good Road", "Bad Road", "Nice View", "Map Error", "Blocked")
         const val AUTHORITY      = "com.androbuttons.fileprovider"
-        const val DMD2_PACKAGE   = "com.thorkracing.dmd2launcher"
+        val NAV_PACKAGES = listOf(
+            "oid.hardware.bluetooth_le",    // DMD (production riding device)
+            "com.thorkracing.dmd2launcher", // DMD launcher
+            "com.thorkracing.dmdLora",      // DMD Lora
+            "cs.builder.app.scenic.dev",    // Scenic (fallback)
+        )
         const val GPS_TIMEOUT_MS = 10_000L
         const val FRESHNESS_MS   = 30_000L
         const val GPX_MIME       = "application/gpx+xml"
@@ -235,7 +240,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     private fun generateAndShare(label: String, location: Location) {
         val gpxFile = writeGpxFile(label, location)
         val uri = FileProvider.getUriForFile(ctx, AUTHORITY, gpxFile)
-        shareGpxUri(uri, label)
+        sendGpxUri(uri)
         showSuccess()
     }
 
@@ -264,23 +269,20 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
 
     // ---- Intent construction ------------------------------------------------
 
-    private fun shareGpxUri(uri: Uri, label: String) {
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = GPX_MIME
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Marker: $label")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            setPackage(DMD2_PACKAGE)
+    private fun sendGpxUri(uri: Uri) {
+        for (pkg in NAV_PACKAGES) {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, GPX_MIME)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage(pkg)
+            }
+            if (intent.resolveActivity(ctx.packageManager) != null) {
+                ctx.startActivity(intent)
+                return
+            }
         }
-
-        if (intent.resolveActivity(ctx.packageManager) != null) {
-            ctx.startActivity(intent)
-        } else {
-            val chooser = Intent.createChooser(intent.apply { setPackage(null) }, "Share GPX Marker")
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ctx.startActivity(chooser)
-        }
+        showGpsError()
     }
 
     // ---- GPS feedback -------------------------------------------------------
