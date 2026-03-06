@@ -406,7 +406,7 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.OPAQUE
+            PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.END or Gravity.TOP
             x = 0
@@ -472,12 +472,13 @@ class OverlayService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // No padding — header bar fills edge-to-edge; content padding applied inside sections
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(surfaceColor)
-                setStroke(2.dp(), primaryColor)
-            }
-            elevation = 12.dp().toFloat()
+            // Semi-transparent (~90% opacity) so the underlying app bleeds through
+            // Left side rounded, right side flush against the screen edge
+            background = createLeftRoundedBackground(
+                color = surfaceColor and 0x00FFFFFF or (230 shl 24),
+                radiusDp = 16
+            )
+            elevation = 8.dp().toFloat()
             clipToOutline = true
         }
 
