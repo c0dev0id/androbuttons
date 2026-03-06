@@ -208,7 +208,8 @@ class OverlayService : Service(), ServiceBridge {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.END or Gravity.TOP
-            x = 0; y = visibleStatusBarHeight
+            x = 0
+            y = visibleStatusBarHeight
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
