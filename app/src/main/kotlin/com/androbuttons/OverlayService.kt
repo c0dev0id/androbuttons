@@ -119,6 +119,8 @@ class OverlayService : Service() {
     private var playPauseIcon: ImageView? = null
     private var playPauseLabel: TextView? = null
     private var playlistContainerView: LinearLayout? = null
+    private var playerCardView: LinearLayout? = null
+    private var noPlayerView: TextView? = null
 
     // Apps pane state
     private data class AppEntry(val label: String, val packageName: String, val isInstalled: Boolean)
@@ -254,6 +256,7 @@ class OverlayService : Service() {
     private val browserConnectionCallback = object : MediaBrowserCompat.ConnectionCallback() {
         override fun onConnected() {
             val browser = mediaBrowser ?: return
+            showNoPlayerMessage(false)
             mediaController?.unregisterCallback(mediaControllerCallback)
             mediaController = MediaControllerCompat(this@OverlayService, browser.sessionToken)
             mediaController!!.registerCallback(mediaControllerCallback, Handler(Looper.getMainLooper()))
@@ -261,11 +264,13 @@ class OverlayService : Service() {
         }
         override fun onConnectionFailed() {
             android.util.Log.w("androbuttons", "MediaBrowser connection failed: ${mediaBrowser?.serviceComponent}")
+            showNoPlayerMessage(true)
         }
         override fun onConnectionSuspended() {
             android.util.Log.w("androbuttons", "MediaBrowser connection suspended")
             mediaBrowser?.disconnect()
             mediaBrowser = null
+            showNoPlayerMessage(true)
         }
     }
 
@@ -425,10 +430,21 @@ class OverlayService : Service() {
     // --- Media connection ---
 
     private fun connectMedia() {
-        val component = findMediaBrowserComponent(TARGET_PLAYER_PKG) ?: return
+        val component = findMediaBrowserComponent(TARGET_PLAYER_PKG)
+        if (component == null) {
+            showNoPlayerMessage(true)
+            return
+        }
         mediaBrowser?.disconnect()
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
         mediaBrowser!!.connect()
+    }
+
+    private fun showNoPlayerMessage(show: Boolean) {
+        noPlayerView?.visibility = if (show) View.VISIBLE else View.GONE
+        playerCardView?.visibility = if (show) View.GONE else View.VISIBLE
+        playPauseButton?.visibility = if (show) View.GONE else View.VISIBLE
+        playlistContainerView?.visibility = if (show) View.GONE else View.VISIBLE
     }
 
     private fun findMediaBrowserComponent(pkg: String): ComponentName? {
@@ -589,8 +605,24 @@ class OverlayService : Service() {
             )
         }
 
+        // --- No player message ---
+        noPlayerView = TextView(this).apply {
+            text = "No player running"
+            textSize = 14f
+            setTextColor(tertiaryText)
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            isClickable = true
+            setOnTouchListener(makePaneSwipeListener())
+        }
+        pane.addView(noPlayerView)
+
         // --- Player card ---
-        val playerCard = LinearLayout(this).apply {
+        playerCardView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createRoundedBackground(playerAreaColor, 12)
             layoutParams = LinearLayout.LayoutParams(
@@ -599,6 +631,7 @@ class OverlayService : Service() {
             ).apply { weight = 1f; bottomMargin = 10.dp() }
             clipToOutline = true
         }
+        val playerCard = playerCardView!!
 
         // Full-width cover art
         coverArtView = ImageView(this).apply {
