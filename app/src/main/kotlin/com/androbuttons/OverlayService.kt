@@ -30,6 +30,7 @@ import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
 import com.androbuttons.common.dpWith
 import com.androbuttons.panes.apps.AppsPane
+import com.androbuttons.panes.markers.MarkersPane
 import com.androbuttons.panes.music.MusicPane
 import com.androbuttons.panes.sensors.SensorsPane
 
@@ -133,7 +134,8 @@ class OverlayService : Service(), ServiceBridge {
         panes = listOf(
             MusicPane(bridge = this),
             AppsPane(bridge = this),
-            SensorsPane(bridge = this)
+            SensorsPane(bridge = this),
+            MarkersPane(bridge = this)
         )
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
