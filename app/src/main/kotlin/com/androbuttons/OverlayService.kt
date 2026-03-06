@@ -1859,7 +1859,10 @@ class OverlayService : Service() {
             .translationX(view.width.toFloat())
             .setDuration(200)
             .setInterpolator(AccelerateInterpolator())
-            .withEndAction { removeOverlay() }
+            .withEndAction {
+                view.visibility = View.INVISIBLE
+                removeOverlay()
+            }
             .start()
     }
 
