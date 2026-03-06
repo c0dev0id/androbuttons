@@ -1,13 +1,12 @@
 package com.androbuttons
 
 import android.content.Context
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import android.graphics.Shader
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
@@ -16,27 +15,43 @@ import android.view.View
 // CompassView
 //
 // The needle is a fixed white arrow always pointing straight up.
-// The outer frame (circle + N E S W labels) rotates by -azimuth so that
-// the N label always points toward magnetic north regardless of device heading.
+// The outer frame (two concentric rings + dense tick marks + N E S W labels)
+// rotates by -azimuth so the N label always points toward magnetic north.
 // ---------------------------------------------------------------------------
 class CompassView(context: Context) : View(context) {
 
     private var azimuthDeg: Float = 0f
 
-    // colors matching OverlayService palette
-    private val bgColor      = Color.parseColor("#FF1E1E1E")
-    private val primaryColor = Color.parseColor("#F57C00")    // orange – N label
-    private val ringColor    = Color.parseColor("#B0B0B0")    // secondaryText
+    private val bgColor      = Color.parseColor("#0D0D0D")
+    private val primaryColor = Color.parseColor("#F57C00")    // amber – N label + major ticks
+    private val ringColor    = Color.parseColor("#3A3A3A")    // dark bezel
     private val needleColor  = Color.WHITE
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = bgColor
         style = Paint.Style.FILL
     }
-    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val outerRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ringColor
         style = Paint.Style.STROKE
         strokeWidth = dp(1f)
+    }
+    private val innerRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ringColor
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+    }
+    private val minorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ringColor
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val majorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = primaryColor
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        strokeCap = Paint.Cap.ROUND
     }
     private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = needleColor
@@ -72,6 +87,7 @@ class CompassView(context: Context) : View(context) {
         val cx = w / 2f
         val cy = h / 2f
         val radius = (minOf(w, h) / 2f) - dp(6f)
+        val outerRadius = radius + dp(3f)
 
         // Background
         canvas.drawRoundRect(0f, 0f, w, h, dp(8f), dp(8f), bgPaint)
@@ -80,8 +96,28 @@ class CompassView(context: Context) : View(context) {
         canvas.save()
         canvas.rotate(-azimuthDeg, cx, cy)
 
-        // Circle
-        canvas.drawCircle(cx, cy, radius, ringPaint)
+        // Outer bezel ring
+        canvas.drawCircle(cx, cy, outerRadius, outerRingPaint)
+        // Inner ring
+        canvas.drawCircle(cx, cy, radius, innerRingPaint)
+
+        // Dense tick marks every 10° (36 ticks total)
+        for (i in 0 until 36) {
+            val angleDeg = i * 10
+            val isMajor = angleDeg % 30 == 0
+            val tickLen = if (isMajor) dp(6f) else dp(3f)
+            val paint = if (isMajor) majorTickPaint else minorTickPaint
+            val tickOuter = radius
+            val tickInner = radius - tickLen
+            val angle = Math.toRadians(angleDeg.toDouble())
+            val cosA = Math.cos(angle).toFloat()
+            val sinA = Math.sin(angle).toFloat()
+            canvas.drawLine(
+                cx + sinA * tickInner, cy - cosA * tickInner,
+                cx + sinA * tickOuter, cy - cosA * tickOuter,
+                paint
+            )
+        }
 
         // Cardinal labels (N at top = -radius from center)
         val lblOffset = radius - dp(10f)
@@ -95,20 +131,6 @@ class CompassView(context: Context) : View(context) {
         canvas.drawText("W", cx - lblOffset, cy - textVCenter, cardinalPaint)
         // E (right)
         canvas.drawText("E", cx + lblOffset, cy - textVCenter, cardinalPaint)
-
-        // Tick marks at 45° intervals
-        val tickOuter = radius
-        val tickInner = radius - dp(4f)
-        for (i in 0 until 8) {
-            val angle = Math.toRadians((i * 45).toDouble())
-            val cosA = Math.cos(angle).toFloat()
-            val sinA = Math.sin(angle).toFloat()
-            canvas.drawLine(
-                cx + sinA * tickInner, cy - cosA * tickInner,
-                cx + sinA * tickOuter, cy - cosA * tickOuter,
-                ringPaint
-            )
-        }
 
         canvas.restore()
 
@@ -128,12 +150,12 @@ class CompassView(context: Context) : View(context) {
         }
         canvas.drawPath(arrowPath, needlePaint)
 
-        // Small circle at pivot
+        // Amber pivot circle
         val pivotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#555555")
+            color = primaryColor
             style = Paint.Style.FILL
         }
-        canvas.drawCircle(cx, cy, dp(3f), pivotPaint)
+        canvas.drawCircle(cx, cy, dp(4f), pivotPaint)
     }
 
     private fun dp(v: Float) = TypedValue.applyDimension(
@@ -148,33 +170,73 @@ class CompassView(context: Context) : View(context) {
 // ---------------------------------------------------------------------------
 // SpeedometerView
 //
-// A 60dp-tall horizontal bar with a green→red gradient.
-// The bar is clipped to represent current speed; first 2dp always visible.
-// Speed shown in bold white text centred on the bar.
+// Radial arc gauge: 260° sweep from 140°, amber→orange→red value arc,
+// thin needle, large speed digits, tick marks.  Square view.
 // ---------------------------------------------------------------------------
 class SpeedometerView(context: Context) : View(context) {
 
     private var speedKmh: Float = 0f
 
-    private val MAX_SPEED = 170f
+    private val MAX_SPEED   = 170f
+    private val START_ANGLE = 140f
+    private val SWEEP_ANGLE = 260f
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF1E1E1E")
+        color = Color.parseColor("#0D0D0D")
         style = Paint.Style.FILL
     }
-    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintAmber = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF5722")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintRed = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F44336")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        strokeCap = Paint.Cap.ROUND
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         isFakeBoldText = true
-        textSize = sp(18f)
+        textSize = sp(28f)
         textAlign = Paint.Align.CENTER
     }
     private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#808080")
-        textSize = sp(9f)
+        color = Color.parseColor("#F57C00")
+        textSize = sp(10f)
         textAlign = Paint.Align.CENTER
+    }
+    private val minorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val majorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        strokeCap = Paint.Cap.ROUND
     }
 
     fun setSpeedKmh(speed: Float) {
@@ -184,40 +246,73 @@ class SpeedometerView(context: Context) : View(context) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        val h = dp(60f).toInt()
-        setMeasuredDimension(w, h)
+        setMeasuredDimension(w, w)   // square
     }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
+        val cx = w / 2f
+        val cy = h / 2f
 
         // Background
-        canvas.drawRoundRect(0f, 0f, w, h, dp(4f), dp(4f), bgPaint)
+        canvas.drawRoundRect(0f, 0f, w, h, dp(8f), dp(8f), bgPaint)
 
-        // Gradient shader (recreate each draw since width is known now)
-        barPaint.shader = LinearGradient(
-            0f, 0f, w, 0f,
-            intArrayOf(Color.parseColor("#4CAF50"), Color.parseColor("#F44336")),
-            null,
-            Shader.TileMode.CLAMP
+        val arcInset = dp(16f)
+        val arcRadius = cx - arcInset
+        val arcOval = RectF(arcInset, arcInset, w - arcInset, h - arcInset)
+
+        // Track arc (full 260°)
+        canvas.drawArc(arcOval, START_ANGLE, SWEEP_ANGLE, false, trackPaint)
+
+        // Value arc
+        val fraction = (speedKmh / MAX_SPEED).coerceIn(0f, 1f)
+        val valueSweep = fraction * SWEEP_ANGLE
+        if (valueSweep > 0f) {
+            val valuePaint = when {
+                fraction < 0.60f -> valuePaintAmber
+                fraction < 0.85f -> valuePaintOrange
+                else             -> valuePaintRed
+            }
+            canvas.drawArc(arcOval, START_ANGLE, valueSweep, false, valuePaint)
+        }
+
+        // Tick marks at every 10° of the 260° sweep (27 ticks: indices 0..26)
+        for (i in 0..26) {
+            val angleDeg = START_ANGLE + i * 10f
+            val isMajor = i % 3 == 0
+            val tickLen = if (isMajor) dp(8f) else dp(4f)
+            val paint = if (isMajor) majorTickPaint else minorTickPaint
+            val tickOuterR = arcRadius
+            val tickInnerR = arcRadius - tickLen
+            val rad = Math.toRadians(angleDeg.toDouble())
+            val cosA = Math.cos(rad).toFloat()
+            val sinA = Math.sin(rad).toFloat()
+            canvas.drawLine(
+                cx + cosA * tickInnerR, cy + sinA * tickInnerR,
+                cx + cosA * tickOuterR, cy + sinA * tickOuterR,
+                paint
+            )
+        }
+
+        // Needle
+        val needleAngle = START_ANGLE + fraction * SWEEP_ANGLE
+        val needleLength = arcRadius - dp(16f)
+        val needleRad = Math.toRadians(needleAngle.toDouble())
+        canvas.drawLine(
+            cx, cy,
+            cx + Math.cos(needleRad).toFloat() * needleLength,
+            cy + Math.sin(needleRad).toFloat() * needleLength,
+            needlePaint
         )
 
-        // Bar width: minimum 2dp, scales to full width at 170 km/h
-        val fraction = (speedKmh / MAX_SPEED).coerceIn(0f, 1f)
-        val minPx = dp(2f)
-        val barW = (minPx + fraction * (w - minPx)).coerceAtMost(w)
-
-        canvas.save()
-        canvas.clipRect(0f, 0f, barW, h)
-        canvas.drawRoundRect(0f, 0f, w, h, dp(4f), dp(4f), barPaint)
-        canvas.restore()
-
         // Speed text
-        val cy = h / 2f
         val textVCenter = (textPaint.descent() + textPaint.ascent()) / 2f
-        canvas.drawText("%.0f".format(speedKmh), w / 2f, cy - textVCenter - dp(5f), textPaint)
-        canvas.drawText("km/h", w / 2f, cy - textVCenter + dp(14f), unitPaint)
+        canvas.drawText("%.0f".format(speedKmh), cx, cy - textVCenter - dp(6f), textPaint)
+
+        // "km/h" label
+        val unitVCenter = (unitPaint.descent() + unitPaint.ascent()) / 2f
+        canvas.drawText("km/h", cx, cy - unitVCenter + dp(14f), unitPaint)
     }
 
     private fun dp(v: Float) = TypedValue.applyDimension(
@@ -232,9 +327,8 @@ class SpeedometerView(context: Context) : View(context) {
 // ---------------------------------------------------------------------------
 // LeanAngleView
 //
-// Two bars from the centre outward (left bar for left lean, right for right).
-// Green at the centre → red at the edges. Full width at ±45°.
-// Lean angle shown in bold white text centred on the view.
+// Artificial horizon style: tilting amber bank bar + fixed wing icons.
+// Height is 50dp; same public API.
 // ---------------------------------------------------------------------------
 class LeanAngleView(context: Context) : View(context) {
 
@@ -243,18 +337,34 @@ class LeanAngleView(context: Context) : View(context) {
     private val MAX_LEAN = 45f
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF1E1E1E")
+        color = Color.parseColor("#0D0D0D")
         style = Paint.Style.FILL
     }
-    private val centerLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#555555")
+    private val horizonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
         style = Paint.Style.STROKE
         strokeWidth = dp(1f)
     }
-    private val leftBarPaint  = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val rightBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val tickMarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val bankBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(3f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val wingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
         isFakeBoldText = true
         textSize = sp(16f)
         textAlign = Paint.Align.CENTER
@@ -275,44 +385,33 @@ class LeanAngleView(context: Context) : View(context) {
         val h = height.toFloat()
         val cx = w / 2f
 
+        // Background
         canvas.drawRoundRect(0f, 0f, w, h, dp(4f), dp(4f), bgPaint)
 
-        val half = w / 2f
+        // Horizon baseline
+        canvas.drawLine(0f, h / 2f, w, h / 2f, horizonPaint)
 
-        if (leanDeg < 0f) {
-            // Leaning left → bar from centre extending left
-            val fraction = (-leanDeg / MAX_LEAN).coerceIn(0f, 1f)
-            val barW = fraction * half
-            leftBarPaint.shader = LinearGradient(
-                cx, 0f, cx - half, 0f,
-                intArrayOf(Color.parseColor("#4CAF50"), Color.parseColor("#F44336")),
-                null,
-                Shader.TileMode.CLAMP
-            )
-            canvas.save()
-            canvas.clipRect(cx - barW, 0f, cx, h)
-            canvas.drawRect(cx - half, 0f, cx, h, leftBarPaint)
-            canvas.restore()
-        } else if (leanDeg > 0f) {
-            // Leaning right → bar from centre extending right
-            val fraction = (leanDeg / MAX_LEAN).coerceIn(0f, 1f)
-            val barW = fraction * half
-            rightBarPaint.shader = LinearGradient(
-                cx, 0f, cx + half, 0f,
-                intArrayOf(Color.parseColor("#4CAF50"), Color.parseColor("#F44336")),
-                null,
-                Shader.TileMode.CLAMP
-            )
-            canvas.save()
-            canvas.clipRect(cx, 0f, cx + barW, h)
-            canvas.drawRect(cx, 0f, cx + half, h, rightBarPaint)
-            canvas.restore()
+        // Tick marks at ±15°, ±30°, ±45° (mapped to half-width)
+        val tickAngles = floatArrayOf(-45f, -30f, -15f, 15f, 30f, 45f)
+        for (angle in tickAngles) {
+            val tickX = cx + (angle / MAX_LEAN) * (w / 2f)
+            canvas.drawLine(tickX, h / 2f - dp(3f), tickX, h / 2f + dp(3f), tickMarkPaint)
         }
 
-        // Centre line
-        canvas.drawLine(cx, 0f, cx, h, centerLinePaint)
+        // Bank bar: amber line rotated by leanDeg around the centre
+        val barHalfW = w * 0.3f
+        canvas.save()
+        canvas.rotate(leanDeg, cx, h / 2f)
+        canvas.drawLine(cx - barHalfW, h / 2f, cx + barHalfW, h / 2f, bankBarPaint)
+        canvas.restore()
 
-        // Text
+        // Fixed wing icons (do NOT rotate)
+        val wingLen = dp(10f)
+        val wingY = h / 2f
+        canvas.drawLine(cx - dp(18f) - wingLen, wingY, cx - dp(18f) + wingLen, wingY, wingPaint)
+        canvas.drawLine(cx + dp(18f) - wingLen, wingY, cx + dp(18f) + wingLen, wingY, wingPaint)
+
+        // Degree text
         val textVCenter = (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText("%.1f°".format(leanDeg), cx, h / 2f - textVCenter, textPaint)
     }
@@ -329,9 +428,9 @@ class LeanAngleView(context: Context) : View(context) {
 // ---------------------------------------------------------------------------
 // ForceDisplayView
 //
-// Square area. Dark background with subtle dot grid pattern.
-// A red dot moves according to linear acceleration: 1G = edge of the area.
-// The dot leaves a red trail that fades over 6 seconds.
+// Square area. Dark background with subtle dot grid + concentric G rings.
+// Amber dot with blur glow moves with linear acceleration (1G = edge).
+// Amber trail fades over 6 seconds.
 // ---------------------------------------------------------------------------
 class ForceDisplayView(context: Context) : View(context) {
 
@@ -350,19 +449,35 @@ class ForceDisplayView(context: Context) : View(context) {
         style = Paint.Style.FILL
     }
     private val dotGridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#1E1E1E")
+        color = Color.parseColor("#1A1A1A")
         style = Paint.Style.FILL
     }
+    private val gRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+    }
+    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#1E1E1E")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+    }
     private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#CC2222")
+        color = Color.parseColor("#E65100")
         style = Paint.Style.STROKE
         strokeWidth = dp(3f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF4444")
+        color = Color.parseColor("#F57C00")
         style = Paint.Style.FILL
+        maskFilter = BlurMaskFilter(dp(6f), BlurMaskFilter.Blur.NORMAL)
+    }
+
+    init {
+        // BlurMaskFilter requires software rendering
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
 
     fun setForce(ax: Float, ay: Float) {
@@ -415,6 +530,14 @@ class ForceDisplayView(context: Context) : View(context) {
             }
             gx += gridSpacing
         }
+
+        // Axis cross-hair
+        canvas.drawLine(0f, cy, w, cy, crosshairPaint)
+        canvas.drawLine(cx, 0f, cx, h, crosshairPaint)
+
+        // Concentric G rings at 0.5G and 1.0G radius
+        canvas.drawCircle(cx, cy, cx * 0.5f, gRingPaint)
+        canvas.drawCircle(cx, cy, cx, gRingPaint)
 
         // Trail
         val now = SystemClock.uptimeMillis()
