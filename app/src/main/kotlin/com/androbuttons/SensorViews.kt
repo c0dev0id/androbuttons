@@ -753,13 +753,6 @@ class GpsInfoView(context: Context) : View(context) {
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
     }
-    private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#F57C00")
-        textSize = sp(8f)
-        textAlign = Paint.Align.CENTER
-        typeface = android.graphics.Typeface.MONOSPACE
-    }
-
     fun update(satellites: Int, accuracyM: Float, updateRateHz: Float) {
         this.satellites   = satellites
         this.accuracyM    = accuracyM
@@ -787,9 +780,9 @@ class GpsInfoView(context: Context) : View(context) {
         // Column data: label, value string, unit string
         data class ColData(val label: String, val value: String, val unit: String)
         val cols = listOf(
-            ColData("SAT", satellites.toString(),            ""),
-            ColData("ACC", "%.1f".format(accuracyM),         "m"),
-            ColData("HZ",  "%.1f".format(updateRateHz),      "Hz")
+            ColData("SAT",  satellites.toString(),         ""),
+            ColData("ACC",  "%.1fm".format(accuracyM),     ""),
+            ColData("RATE", "%.1fHz".format(updateRateHz), "")
         )
 
         for ((i, col) in cols.withIndex()) {
@@ -803,12 +796,6 @@ class GpsInfoView(context: Context) : View(context) {
             val valueVCenter = (valuePaint.descent() + valuePaint.ascent()) / 2f
             val valueY = h / 2f - valueVCenter + dp(2f)
             canvas.drawText(col.value, cx, valueY, valuePaint)
-
-            // Unit — near bottom (only when non-empty)
-            if (col.unit.isNotEmpty()) {
-                val unitY = h - dp(4f)
-                canvas.drawText(col.unit, cx, unitY, unitPaint)
-            }
         }
     }
 
