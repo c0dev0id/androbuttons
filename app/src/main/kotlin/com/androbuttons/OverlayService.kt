@@ -76,8 +76,6 @@ class OverlayService : Service() {
         private const val TARGET_PLAYER_PKG = "de.codevoid.androsnd"
         private const val KEY_SELECTED_APPS = "selected_apps"
         private const val KEY_LEAN_CALIBRATION = "lean_cal_offset"
-        private const val KEY_PLAYLIST_CACHE       = "playlist_cache"
-        private const val KEY_PLAYLIST_FINGERPRINT = "playlist_fingerprint"
         private const val VIRTUAL_WINDOW = 20
 
         var isRunning = false
@@ -309,13 +307,7 @@ class OverlayService : Service() {
                 }
                 if (pendingFolderSubscriptions <= 0) {
                     musicListIndex = 0
-                    val newFingerprint = trackList.joinToString(",") { it.mediaId }
-                    val cachedFingerprint = prefs.getString(KEY_PLAYLIST_FINGERPRINT, "")
-                    if (newFingerprint != cachedFingerprint) {
-                        savePlaylistCache()
-                        rebuildTrackList(resetWindow = true)
-                    }
-                    // else: cache is still fresh, skip the rebuild
+                    rebuildTrackList(resetWindow = true)
                 }
             }
         }
@@ -432,50 +424,8 @@ class OverlayService : Service() {
 
     // --- Media connection ---
 
-    private fun savePlaylistCache() {
-        val arr = org.json.JSONArray()
-        trackList.forEach { t ->
-            arr.put(org.json.JSONObject().apply {
-                put("mediaId",  t.mediaId)
-                put("title",    t.title)
-                put("artist",   t.artist)
-                put("duration", t.duration)
-                put("artUri",   t.artUri?.toString() ?: "")
-            })
-        }
-        val fingerprint = trackList.joinToString(",") { it.mediaId }
-        prefs.edit()
-            .putString(KEY_PLAYLIST_CACHE, arr.toString())
-            .putString(KEY_PLAYLIST_FINGERPRINT, fingerprint)
-            .apply()
-    }
-
-    private fun loadPlaylistCache(): Boolean {
-        val json = prefs.getString(KEY_PLAYLIST_CACHE, null) ?: return false
-        return try {
-            val arr = org.json.JSONArray(json)
-            trackList.clear()
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val uriStr = o.getString("artUri")
-                trackList.add(TrackItem(
-                    mediaId  = o.getString("mediaId"),
-                    title    = o.getString("title"),
-                    artist   = o.getString("artist"),
-                    duration = o.getLong("duration"),
-                    artUri   = if (uriStr.isNotEmpty()) Uri.parse(uriStr) else null
-                ))
-            }
-            trackList.isNotEmpty()
-        } catch (_: Exception) { false }
-    }
-
     private fun connectMedia() {
         val component = findMediaBrowserComponent(TARGET_PLAYER_PKG) ?: return
-        // Show cached playlist immediately while the live connection loads
-        if (loadPlaylistCache()) {
-            rebuildTrackList(resetWindow = true)
-        }
         mediaBrowser?.disconnect()
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
         mediaBrowser!!.connect()
