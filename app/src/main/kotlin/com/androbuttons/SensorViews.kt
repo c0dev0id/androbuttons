@@ -10,6 +10,8 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
+import kotlin.math.abs
+import kotlin.math.ln
 
 // ---------------------------------------------------------------------------
 // CompassView
@@ -579,13 +581,22 @@ class LeanAngleView(context: Context) : View(context) {
 // ForceDisplayView
 //
 // Square area. Dark background with subtle dot grid + concentric G rings.
-// Amber dot with blur glow moves with linear acceleration (1G = edge).
+// Amber dot with blur glow moves with linear acceleration (logarithmic scale, 2G = edge).
 // Amber trail fades over 6 seconds.
 // ---------------------------------------------------------------------------
 class ForceDisplayView(context: Context) : View(context) {
 
     private val G = 9.81f
+    private val LOG_MAX_G = 2.0f   // G-forces at/beyond this value map to the view edge
     private val TRAIL_DURATION_MS = 6000L
+
+    /** Maps a signed G value onto [-1, 1] via a logarithmic scale.
+     *  Signs are preserved; values at ±LOG_MAX_G map to ±1. */
+    private fun logScale(gValue: Float): Float {
+        val sign = if (gValue < 0f) -1f else 1f
+        val norm = ln(1.0 + abs(gValue).toDouble()) / ln(1.0 + LOG_MAX_G.toDouble())
+        return (sign * norm.toFloat()).coerceIn(-1f, 1f)
+    }
 
     // Trail point: screen x, y, timestamp
     private data class TrailPoint(val x: Float, val y: Float, val timeMs: Long)
@@ -641,8 +652,8 @@ class ForceDisplayView(context: Context) : View(context) {
         val cy = h / 2f
         val dotRadius = dp(5f)
 
-        dotX = (cx + (ax / G) * cx).coerceIn(dotRadius, w - dotRadius)
-        dotY = (cy - (ay / G) * cy).coerceIn(dotRadius, h - dotRadius)
+        dotX = (cx + logScale(ax / G) * cx).coerceIn(dotRadius, w - dotRadius)
+        dotY = (cy - logScale(ay / G) * cy).coerceIn(dotRadius, h - dotRadius)
 
         val now = SystemClock.uptimeMillis()
         trail.addLast(TrailPoint(dotX, dotY, now))
@@ -685,9 +696,11 @@ class ForceDisplayView(context: Context) : View(context) {
         canvas.drawLine(0f, cy, w, cy, crosshairPaint)
         canvas.drawLine(cx, 0f, cx, h, crosshairPaint)
 
-        // Concentric G rings at 0.5G and 1.0G radius
-        canvas.drawCircle(cx, cy, cx * 0.5f, gRingPaint)
-        canvas.drawCircle(cx, cy, cx, gRingPaint)
+        // Concentric G rings — radii log-scaled to match dot mapping
+        fun ringR(g: Float) = cx * logScale(g)
+        canvas.drawCircle(cx, cy, ringR(0.5f), gRingPaint)   // ~49% radius
+        canvas.drawCircle(cx, cy, ringR(1.0f), gRingPaint)   // ~70% radius
+        // 2G = view edge, no extra ring needed
 
         // Trail
         val now = SystemClock.uptimeMillis()
