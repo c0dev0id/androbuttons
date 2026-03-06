@@ -274,7 +274,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         private var lastLinearAccelMagnitude: Float = 0f
 
         private val AUTOLEVEL_STILL_THRESHOLD_MS2 = 0.70f   // ≈ 0.07 g
-        private val AUTOLEVEL_STILL_DURATION_MS   = 1500L
+        private val AUTOLEVEL_STILL_DURATION_MS   = 3000L
         private val AUTOLEVEL_SPEED_THRESHOLD_KMH = 5f
 
         private val rotationMatrix    = FloatArray(9)

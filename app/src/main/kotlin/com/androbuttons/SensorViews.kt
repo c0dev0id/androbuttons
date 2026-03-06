@@ -1,5 +1,6 @@
 package com.androbuttons
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
@@ -10,6 +11,7 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
 import kotlin.math.ln
 
@@ -177,7 +179,8 @@ class CompassView(context: Context) : View(context) {
 // ---------------------------------------------------------------------------
 class SpeedometerView(context: Context) : View(context) {
 
-    private var speedKmh: Float = 0f
+    private var displayedSpeedKmh: Float = 0f
+    private var speedAnimator: ValueAnimator? = null
 
     private val MAX_SPEED   = 170f
     private val START_ANGLE = 140f
@@ -242,8 +245,17 @@ class SpeedometerView(context: Context) : View(context) {
     }
 
     fun setSpeedKmh(speed: Float) {
-        speedKmh = speed.coerceAtLeast(0f)
-        invalidate()
+        val target = speed.coerceAtLeast(0f)
+        speedAnimator?.cancel()
+        speedAnimator = ValueAnimator.ofFloat(displayedSpeedKmh, target).apply {
+            duration = 900L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { anim ->
+                displayedSpeedKmh = anim.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -268,7 +280,7 @@ class SpeedometerView(context: Context) : View(context) {
         canvas.drawArc(arcOval, START_ANGLE, SWEEP_ANGLE, false, trackPaint)
 
         // Value arc
-        val fraction = (speedKmh / MAX_SPEED).coerceIn(0f, 1f)
+        val fraction = (displayedSpeedKmh / MAX_SPEED).coerceIn(0f, 1f)
         val valueSweep = fraction * SWEEP_ANGLE
         if (valueSweep > 0f) {
             val valuePaint = when {
@@ -310,7 +322,7 @@ class SpeedometerView(context: Context) : View(context) {
 
         // Speed text
         val textVCenter = (textPaint.descent() + textPaint.ascent()) / 2f
-        canvas.drawText("%.0f".format(speedKmh), cx, cy - textVCenter - dp(6f), textPaint)
+        canvas.drawText("%.0f".format(displayedSpeedKmh), cx, cy - textVCenter - dp(6f), textPaint)
 
         // "km/h" label
         val unitVCenter = (unitPaint.descent() + unitPaint.ascent()) / 2f
@@ -587,7 +599,7 @@ class LeanAngleView(context: Context) : View(context) {
 class ForceDisplayView(context: Context) : View(context) {
 
     private val G = 9.81f
-    private val LOG_MAX_G = 2.0f   // G-forces at/beyond this value map to the view edge
+    private val LOG_MAX_G = 0.8f   // G-forces at/beyond this value map to the view edge
     private val TRAIL_DURATION_MS = 6000L
 
     /** Maps a signed G value onto [-1, 1] via a logarithmic scale.
