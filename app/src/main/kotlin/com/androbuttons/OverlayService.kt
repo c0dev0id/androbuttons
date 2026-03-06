@@ -144,6 +144,7 @@ class OverlayService : Service() {
     private var titleArrowRight: TextView? = null
     private var titleLeftZone: LinearLayout? = null
     private var titleRightZone: LinearLayout? = null
+    private val paneDots = mutableListOf<View>()
 
     // Color palette
     private val primaryColor    = Color.parseColor("#F57C00")   // orange
@@ -471,10 +472,18 @@ class OverlayService : Service() {
     }
 
     private fun buildTitleBar(): LinearLayout {
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(headerColor)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(headerColor)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -504,7 +513,7 @@ class OverlayService : Service() {
         titleLeftZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            setPadding(12.dp(), 12.dp(), 12.dp(), 6.dp())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { weight = 1f }
             alpha = if (currentPane > 0) 1f else 0.4f
@@ -523,7 +532,7 @@ class OverlayService : Service() {
         val centerZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 12.dp(), 0, 12.dp())
+            setPadding(0, 12.dp(), 0, 6.dp())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { weight = 2f }
             addView(titleText)
@@ -532,7 +541,7 @@ class OverlayService : Service() {
         titleRightZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            setPadding(12.dp(), 12.dp(), 12.dp(), 6.dp())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { weight = 1f }
             alpha = if (currentPane < paneCount - 1) 1f else 0.4f
@@ -551,8 +560,44 @@ class OverlayService : Service() {
         bar.addView(titleLeftZone)
         bar.addView(centerZone)
         bar.addView(titleRightZone)
+        wrapper.addView(bar)
 
-        return bar
+        // Pane indicator dots
+        paneDots.clear()
+        val dotsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 8.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        for (i in 0 until paneCount) {
+            val dot = View(this).apply {
+                val size = if (i == currentPane) 6.dp() else 5.dp()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    marginStart = 3.dp(); marginEnd = 3.dp()
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(if (i == currentPane) primaryColor else inactiveBg)
+                }
+            }
+            paneDots.add(dot)
+            dotsRow.addView(dot)
+        }
+        wrapper.addView(dotsRow)
+
+        // Thin divider line
+        wrapper.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1.dp()
+            )
+            setBackgroundColor(Color.parseColor("#1AFFFFFF"))
+        })
+
+        return wrapper
     }
 
     private fun refreshTitleBar() {
@@ -563,6 +608,17 @@ class OverlayService : Service() {
         titleArrowRight?.setTextColor(if (rightActive) primaryColor else inactiveBg)
         titleLeftZone?.alpha = if (leftActive) 1f else 0.4f
         titleRightZone?.alpha = if (rightActive) 1f else 0.4f
+        paneDots.forEachIndexed { i, dot ->
+            val active = i == currentPane
+            val size = if (active) 6.dp() else 5.dp()
+            dot.layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginStart = 3.dp(); marginEnd = 3.dp()
+            }
+            dot.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (active) primaryColor else inactiveBg)
+            }
+        }
     }
 
     private fun buildFlipperView(): ViewFlipper {
@@ -710,6 +766,7 @@ class OverlayService : Service() {
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
             setTextColor(tertiaryText)
+            letterSpacing = 0.1f
             setPadding(2.dp(), 0, 2.dp(), 4.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -738,7 +795,7 @@ class OverlayService : Service() {
 
         // Placeholder when no tracks loaded
         trackListContainer!!.addView(TextView(this).apply {
-            text = "No tracks"
+            text = "♫  No tracks"
             textSize = 12f
             setTextColor(tertiaryText)
             gravity = Gravity.CENTER
@@ -837,16 +894,13 @@ class OverlayService : Service() {
             setTypeface(null, Typeface.BOLD)
             gravity = Gravity.CENTER
             setTextColor(secondaryText)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(inactiveBg)
-            }
+            background = actionButtonBackground(inactiveBg)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = 8.dp() }
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = true
             setOnClickListener { showConfigureView() }
         }
 
@@ -878,12 +932,17 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        fun makeCheckbox(checked: Boolean): View {
-            return View(this).apply {
+        fun makeCheckbox(checked: Boolean): TextView {
+            return TextView(this).apply {
                 val size = 24.dp()
                 layoutParams = LinearLayout.LayoutParams(size, size).apply {
                     rightMargin = 12.dp()
                 }
+                gravity = Gravity.CENTER
+                text = if (checked) "✓" else ""
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setTypeface(null, Typeface.BOLD)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     cornerRadius = 4.dp().toFloat()
@@ -922,6 +981,7 @@ class OverlayService : Service() {
                 setOnClickListener {
                     val nowChecked = !(checkedState[pkg] ?: false)
                     checkedState[pkg] = nowChecked
+                    (checkbox as TextView).text = if (nowChecked) "✓" else ""
                     checkbox.background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = 4.dp().toFloat()
@@ -950,16 +1010,13 @@ class OverlayService : Service() {
             setTypeface(null, Typeface.BOLD)
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(primaryColor)
-            }
+            background = actionButtonBackground(primaryColor)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = 8.dp() }
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = true
             setOnClickListener {
                 val selected = installedApps
                     .filter { (pkg, _) -> checkedState[pkg] == true }
@@ -988,6 +1045,7 @@ class OverlayService : Service() {
             textSize = 10f
             setTextColor(tertiaryText)
             setTypeface(null, Typeface.BOLD)
+            letterSpacing = 0.1f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1071,16 +1129,13 @@ class OverlayService : Service() {
             setTypeface(null, Typeface.BOLD)
             gravity = Gravity.CENTER
             setTextColor(secondaryText)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(inactiveBg)
-            }
+            background = actionButtonBackground(inactiveBg)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = 6.dp() }
             setPadding(8.dp(), 14.dp(), 8.dp(), 14.dp())
+            isClickable = true
             setOnClickListener {
                 val raw = sensorCoordinator?.currentRollDeg ?: 0f
                 prefs.edit().putFloat(KEY_LEAN_CALIBRATION, raw).apply()
@@ -1315,7 +1370,7 @@ class OverlayService : Service() {
 
         if (trackList.isEmpty()) {
             container.addView(TextView(this).apply {
-                text = "No tracks"
+                text = "♫  No tracks"
                 textSize = 12f
                 setTextColor(tertiaryText)
                 gravity = Gravity.CENTER
@@ -1835,5 +1890,19 @@ class OverlayService : Service() {
             setColor(color)
             if (strokeWidthDp > 0) setStroke(strokeWidthDp.dp(), strokeColor)
         }
+    }
+
+    private fun actionButtonBackground(color: Int): RippleDrawable {
+        val bg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(color)
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 8.dp().toFloat()
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(Color.argb(60, 255, 255, 255)), bg, mask)
     }
 }
