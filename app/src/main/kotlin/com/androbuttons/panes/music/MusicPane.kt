@@ -362,10 +362,15 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
 
     // ---- Media callbacks ----------------------------------------------------
 
+    private fun normalizeMediaId(rawId: String?): String? {
+        if (rawId == null) return null
+        return if (rawId.all { it.isDigit() }) "song_$rawId" else rawId
+    }
+
     private val mediaControllerCallback = object : MediaControllerCompat.Callback() {
         override fun onSessionReady() {
             val metadata = mediaController?.metadata
-            currentlyPlayingMediaId = metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)
+            currentlyPlayingMediaId = normalizeMediaId(metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID))
             updateNowPlaying(metadata)
             refreshTrackList()
             scrollToPlaying()
@@ -376,7 +381,7 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
             if (playing) { seekHandler.removeCallbacks(seekUpdater); seekHandler.post(seekUpdater) }
         }
         override fun onMetadataChanged(metadata: MediaMetadataCompat?) {
-            val newId = metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)
+            val newId = normalizeMediaId(metadata?.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID))
             if (newId != currentlyPlayingMediaId) {
                 currentlyPlayingMediaId = newId; refreshTrackList(); scrollToPlaying()
             }
