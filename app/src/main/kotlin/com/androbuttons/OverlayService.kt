@@ -77,6 +77,9 @@ class OverlayService : Service() {
         private const val KEY_SELECTED_APPS = "selected_apps"
         private const val KEY_LEAN_CALIBRATION = "lean_cal_offset"
         private const val VIRTUAL_WINDOW = 20
+        private const val SCROLL_DEBOUNCE_MS = 150L
+        private const val SCROLL_THRESHOLD_BOTTOM = 0.8f
+        private const val SCROLL_THRESHOLD_TOP = 0.2f
 
         var isRunning = false
     }
@@ -106,6 +109,7 @@ class OverlayService : Service() {
     private var mediaController: MediaControllerCompat? = null
     private var mediaBrowser: MediaBrowserCompat? = null
     private val seekHandler = Handler(Looper.getMainLooper())
+    private val scrollWindowRunnable = Runnable { handleScrollVirtualWindow() }
     private var musicScrollView: ScrollView? = null
     private var trackListContainer: LinearLayout? = null
     private val trackRowViews = mutableListOf<LinearLayout>()
@@ -814,6 +818,19 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0
             ).apply { weight = 1f }
             isVerticalScrollBarEnabled = false
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN && musicFocus == MusicFocus.BUTTON) {
+                    musicFocus = MusicFocus.LIST
+                    refreshMusicFocus()
+                }
+                false
+            }
+            setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+                if (scrollY != oldScrollY) {
+                    seekHandler.removeCallbacks(scrollWindowRunnable)
+                    seekHandler.postDelayed(scrollWindowRunnable, SCROLL_DEBOUNCE_MS)
+                }
+            }
         }
         trackListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1554,6 +1571,45 @@ class OverlayService : Service() {
         }
     }
 
+    private fun handleScrollVirtualWindow() {
+        val scrollView = musicScrollView ?: return
+        val container = trackListContainer ?: return
+        if (trackList.isEmpty() || trackRowViews.isEmpty()) return
+        val scrollY = scrollView.scrollY
+        val contentHeight = container.height
+        val visibleHeight = scrollView.height
+        if (contentHeight <= 0 || visibleHeight <= 0) return
+        val scrollBottom = scrollY + visibleHeight
+        // Near bottom → shift window forward
+        if (scrollBottom >= contentHeight * SCROLL_THRESHOLD_BOTTOM && virtualStart + VIRTUAL_WINDOW < trackList.size) {
+            val topVisibleRow = trackRowViews.indexOfFirst { it.bottom > scrollY }.coerceAtLeast(0)
+            val topAbsoluteIndex = virtualStart + topVisibleRow
+            val newVirtualStart = (topAbsoluteIndex - VIRTUAL_WINDOW / 2)
+                .coerceIn(0, maxOf(0, trackList.size - VIRTUAL_WINDOW))
+            if (newVirtualStart > virtualStart) {
+                virtualStart = newVirtualStart
+                rebuildTrackList()
+                scrollView.post {
+                    val newLocalIndex = (topAbsoluteIndex - virtualStart).coerceIn(0, trackRowViews.size - 1)
+                    trackRowViews.getOrNull(newLocalIndex)?.let { scrollView.scrollTo(0, it.top) }
+                }
+            }
+        }
+        // Near top → shift window backward
+        else if (scrollY <= contentHeight * SCROLL_THRESHOLD_TOP && virtualStart > 0) {
+            val topAbsoluteIndex = virtualStart
+            val newVirtualStart = maxOf(0, virtualStart - VIRTUAL_WINDOW / 2)
+            if (newVirtualStart < virtualStart) {
+                virtualStart = newVirtualStart
+                rebuildTrackList()
+                scrollView.post {
+                    val newLocalIndex = (topAbsoluteIndex - virtualStart).coerceIn(0, trackRowViews.size - 1)
+                    trackRowViews.getOrNull(newLocalIndex)?.let { scrollView.scrollTo(0, it.top) }
+                }
+            }
+        }
+    }
+
     private fun scrollToSelected() {
         if (musicListIndex < 0 || musicListIndex >= trackList.size) return
         ensureIndexInWindow(musicListIndex)
@@ -1883,6 +1939,7 @@ class OverlayService : Service() {
                             currentPane--
                             viewFlipper.showPrevious()
                             refreshTitleBar()
+                            if (currentPane == 0) scrollToPlaying()
                         }
                     }
                     true
