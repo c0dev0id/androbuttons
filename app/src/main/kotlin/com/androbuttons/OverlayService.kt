@@ -1093,10 +1093,10 @@ class OverlayService : Service() {
 
         fun sectionHeader(title: String): TextView = TextView(this).apply {
             text = title
-            textSize = 10f
-            setTextColor(tertiaryText)
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.1f
+            textSize = 9f
+            setTextColor(Color.parseColor("#F57C00"))
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            letterSpacing = 0.2f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1175,16 +1175,21 @@ class OverlayService : Service() {
         inner.addView(leanAngleView)
 
         val calibrateBtn = TextView(this).apply {
-            text = "Calibrate"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
+            text = "CALIBRATE"
+            textSize = 12f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setTextColor(secondaryText)
-            background = actionButtonBackground(inactiveBg)
+            setTextColor(Color.parseColor("#F57C00"))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 24.dp().toFloat()
+                setColor(Color.parseColor("#1A1A1A"))
+                setStroke(2.dp(), Color.parseColor("#F57C00"))
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 6.dp() }
+            ).apply { topMargin = 8.dp() }
             setPadding(8.dp(), 14.dp(), 8.dp(), 14.dp())
             isClickable = true
             setOnClickListener {
