@@ -38,10 +38,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         val MARKER_LABELS = listOf("Good Road", "Bad Road", "Nice View", "Map Error", "Blocked")
         const val AUTHORITY      = "com.androbuttons.fileprovider"
         val NAV_PACKAGES = listOf(
-            "oid.hardware.bluetooth_le",    // DMD (production riding device)
-            "com.thorkracing.dmd2launcher", // DMD launcher
-            "com.thorkracing.dmdLora",      // DMD Lora
-            "cs.builder.app.scenic.dev",    // Scenic (fallback)
+            "com.thorkracing.dmd2launcher",
         )
         const val GPS_TIMEOUT_MS = 10_000L
         const val FRESHNESS_MS   = 30_000L
