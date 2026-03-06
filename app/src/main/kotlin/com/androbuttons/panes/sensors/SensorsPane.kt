@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
+import com.androbuttons.AltimeterView
 import com.androbuttons.CompassView
 import com.androbuttons.ForceDisplayView
 import com.androbuttons.LeanAngleView
@@ -39,6 +40,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
     // View references — set during buildView(), used by SensorCoordinator
     private var compassView: CompassView? = null
     private var speedometerView: SpeedometerView? = null
+    private var altimeterView: AltimeterView? = null
     private var leanAngleView: LeanAngleView? = null
     private var forceDisplayView: ForceDisplayView? = null
 
@@ -116,15 +118,48 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         inner.addView(topRow)
         inner.addView(spacer())
 
-        // --- Speedometer ---
-        inner.addView(sectionHeader("SPEED"))
+        // --- Speedometer + Altimeter (side by side) ---
+        val speedRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val speedCol = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        speedCol.addView(sectionHeader("SPEED"))
         speedometerView = SpeedometerView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        inner.addView(speedometerView)
+        speedCol.addView(speedometerView)
+        speedRow.addView(speedCol)
+
+        speedRow.addView(Space(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(4.dp(), LinearLayout.LayoutParams.MATCH_PARENT)
+        })
+
+        val altCol = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        altCol.addView(sectionHeader("ALTITUDE"))
+        altimeterView = AltimeterView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        altCol.addView(altimeterView)
+        speedRow.addView(altCol)
+
+        inner.addView(speedRow)
         inner.addView(spacer())
 
         // --- Lean Angle ---
@@ -267,6 +302,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             gpsSpeedKmh = location.speed * 3.6f
             gpsBearing  = if (location.hasBearing()) location.bearing else null
             speedometerView?.setSpeedKmh(gpsSpeedKmh)
+            if (location.hasAltitude()) altimeterView?.setAltitudeM(location.altitude.toFloat())
         }
 
         fun start() {

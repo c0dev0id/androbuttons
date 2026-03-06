@@ -325,6 +325,156 @@ class SpeedometerView(context: Context) : View(context) {
 }
 
 // ---------------------------------------------------------------------------
+// AltimeterView
+//
+// Radial arc gauge: 260° sweep, 0–3000 m range.  Matches SpeedometerView
+// visual style so the two instruments look like a matched pair.
+// ---------------------------------------------------------------------------
+class AltimeterView(context: Context) : View(context) {
+
+    private var altitudeM: Float = 0f
+
+    private val MAX_ALT    = 3000f
+    private val START_ANGLE = 140f
+    private val SWEEP_ANGLE = 260f
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#0D0D0D")
+        style = Paint.Style.FILL
+    }
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintAmber = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF5722")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val valuePaintRed = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F44336")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(10f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        isFakeBoldText = true
+        textSize = sp(22f)
+        textAlign = Paint.Align.CENTER
+    }
+    private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        textSize = sp(10f)
+        textAlign = Paint.Align.CENTER
+    }
+    private val minorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val majorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3A3A3A")
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    fun setAltitudeM(alt: Float) {
+        altitudeM = alt.coerceAtLeast(0f)
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        setMeasuredDimension(w, w)   // square
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cx = w / 2f
+        val cy = h / 2f
+
+        canvas.drawRoundRect(0f, 0f, w, h, dp(8f), dp(8f), bgPaint)
+
+        val arcInset  = dp(16f)
+        val arcRadius = cx - arcInset
+        val arcOval   = RectF(arcInset, arcInset, w - arcInset, h - arcInset)
+
+        canvas.drawArc(arcOval, START_ANGLE, SWEEP_ANGLE, false, trackPaint)
+
+        val fraction   = (altitudeM / MAX_ALT).coerceIn(0f, 1f)
+        val valueSweep = fraction * SWEEP_ANGLE
+        if (valueSweep > 0f) {
+            val valuePaint = when {
+                fraction < 0.60f -> valuePaintAmber
+                fraction < 0.85f -> valuePaintOrange
+                else             -> valuePaintRed
+            }
+            canvas.drawArc(arcOval, START_ANGLE, valueSweep, false, valuePaint)
+        }
+
+        for (i in 0..26) {
+            val angleDeg = START_ANGLE + i * 10f
+            val isMajor  = i % 3 == 0
+            val tickLen  = if (isMajor) dp(8f) else dp(4f)
+            val paint    = if (isMajor) majorTickPaint else minorTickPaint
+            val tickOuterR = arcRadius
+            val tickInnerR = arcRadius - tickLen
+            val rad  = Math.toRadians(angleDeg.toDouble())
+            val cosA = Math.cos(rad).toFloat()
+            val sinA = Math.sin(rad).toFloat()
+            canvas.drawLine(
+                cx + cosA * tickInnerR, cy + sinA * tickInnerR,
+                cx + cosA * tickOuterR, cy + sinA * tickOuterR,
+                paint
+            )
+        }
+
+        val needleAngle  = START_ANGLE + fraction * SWEEP_ANGLE
+        val needleLength = arcRadius - dp(16f)
+        val needleRad    = Math.toRadians(needleAngle.toDouble())
+        canvas.drawLine(
+            cx, cy,
+            cx + Math.cos(needleRad).toFloat() * needleLength,
+            cy + Math.sin(needleRad).toFloat() * needleLength,
+            needlePaint
+        )
+
+        val textVCenter = (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText("%.0f".format(altitudeM), cx, cy - textVCenter - dp(6f), textPaint)
+
+        val unitVCenter = (unitPaint.descent() + unitPaint.ascent()) / 2f
+        canvas.drawText("m", cx, cy - unitVCenter + dp(14f), unitPaint)
+    }
+
+    private fun dp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
+    )
+
+    private fun sp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics
+    )
+}
+
+// ---------------------------------------------------------------------------
 // LeanAngleView
 //
 // Artificial horizon style: tilting amber bank bar + fixed wing icons.
