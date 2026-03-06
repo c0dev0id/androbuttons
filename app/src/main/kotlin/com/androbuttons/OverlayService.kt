@@ -409,7 +409,7 @@ class OverlayService : Service() {
             PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.END or Gravity.TOP
-            x = 20.dp()
+            x = 0
             y = visibleStatusBarHeight
         }
         windowParams = params
@@ -472,8 +472,12 @@ class OverlayService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // No padding — header bar fills edge-to-edge; content padding applied inside sections
-            background = createRoundedBackground(surfaceColor, 16)
-            elevation = 8.dp().toFloat()
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(surfaceColor)
+                setStroke(2.dp(), primaryColor)
+            }
+            elevation = 12.dp().toFloat()
             clipToOutline = true
         }
 
