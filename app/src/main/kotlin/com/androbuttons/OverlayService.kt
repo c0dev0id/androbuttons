@@ -78,6 +78,7 @@ class OverlayService : Service() {
         private const val KEY_LEAN_CALIBRATION = "lean_cal_offset"
         private const val KEY_PLAYLIST_CACHE       = "playlist_cache"
         private const val KEY_PLAYLIST_FINGERPRINT = "playlist_fingerprint"
+        private const val VIRTUAL_WINDOW = 20
 
         var isRunning = false
     }
@@ -110,6 +111,8 @@ class OverlayService : Service() {
     private var musicScrollView: ScrollView? = null
     private var trackListContainer: LinearLayout? = null
     private val trackRowViews = mutableListOf<LinearLayout>()
+    // Virtual window: only VIRTUAL_WINDOW rows are rendered at a time
+    private var virtualStart = 0
     private var seekBarFill: View? = null
     private var coverArtView: ImageView? = null
     private var timeElapsed: TextView? = null
@@ -310,7 +313,7 @@ class OverlayService : Service() {
                     val cachedFingerprint = prefs.getString(KEY_PLAYLIST_FINGERPRINT, "")
                     if (newFingerprint != cachedFingerprint) {
                         savePlaylistCache()
-                        rebuildTrackList()
+                        rebuildTrackList(resetWindow = true)
                     }
                     // else: cache is still fresh, skip the rebuild
                 }
@@ -471,7 +474,7 @@ class OverlayService : Service() {
         val component = findMediaBrowserComponent(TARGET_PLAYER_PKG) ?: return
         // Show cached playlist immediately while the live connection loads
         if (loadPlaylistCache()) {
-            rebuildTrackList()
+            rebuildTrackList(resetWindow = true)
         }
         mediaBrowser?.disconnect()
         mediaBrowser = MediaBrowserCompat(this, component, browserConnectionCallback, null)
@@ -1355,7 +1358,7 @@ class OverlayService : Service() {
 
     // --- Music pane updates ---
 
-    private fun rebuildTrackList() {
+    private fun rebuildTrackList(resetWindow: Boolean = false) {
         val container = trackListContainer ?: return
         container.removeAllViews()
         trackRowViews.clear()
@@ -1374,12 +1377,30 @@ class OverlayService : Service() {
             return
         }
 
-        trackList.forEachIndexed { index, track ->
+        if (resetWindow) {
+            val playingIdx = currentlyPlayingMediaId?.let { id ->
+                trackList.indexOfFirst { it.mediaId == id }
+            } ?: -1
+            val center = if (playingIdx >= 0) playingIdx else musicListIndex.coerceAtLeast(0)
+            virtualStart = (center - VIRTUAL_WINDOW / 2).coerceIn(0, maxOf(0, trackList.size - VIRTUAL_WINDOW))
+        }
+
+        val end = minOf(virtualStart + VIRTUAL_WINDOW, trackList.size)
+        for (index in virtualStart until end) {
+            val track = trackList[index]
             val row = buildTrackRow(track, musicFocus == MusicFocus.LIST_ENTRY && index == musicListIndex, track.mediaId == currentlyPlayingMediaId, index)
             trackRowViews.add(row)
             container.addView(row)
         }
-        scrollToPlaying()
+
+        // Scroll to the playing track if it is within the rendered window
+        val playingIdx = currentlyPlayingMediaId?.let { id ->
+            trackList.indexOfFirst { it.mediaId == id }
+        } ?: -1
+        val localPlayingIdx = playingIdx - virtualStart
+        if (localPlayingIdx in 0 until trackRowViews.size) {
+            musicScrollView?.post { musicScrollView?.scrollTo(0, trackRowViews[localPlayingIdx].top) }
+        }
     }
 
     private fun trackRowBackground(isFocused: Boolean, isPlaying: Boolean): GradientDrawable? {
@@ -1479,15 +1500,27 @@ class OverlayService : Service() {
 
     private fun refreshTrackList() {
         trackRowViews.forEachIndexed { i, row ->
-            val focused = musicFocus == MusicFocus.LIST_ENTRY && i == musicListIndex
-            val playing = trackList.getOrNull(i)?.mediaId == currentlyPlayingMediaId
+            val trackIndex = virtualStart + i
+            val focused = musicFocus == MusicFocus.LIST_ENTRY && trackIndex == musicListIndex
+            val playing = trackList.getOrNull(trackIndex)?.mediaId == currentlyPlayingMediaId
             row.background = trackRowBackground(focused, playing)
         }
     }
 
+    private fun ensureIndexInWindow(index: Int) {
+        if (index < 0 || index >= trackList.size) return
+        if (index < virtualStart || index >= virtualStart + VIRTUAL_WINDOW) {
+            virtualStart = (index - VIRTUAL_WINDOW / 2).coerceIn(0, maxOf(0, trackList.size - VIRTUAL_WINDOW))
+            rebuildTrackList()
+        }
+    }
+
     private fun scrollToSelected() {
+        if (musicListIndex < 0 || musicListIndex >= trackList.size) return
+        ensureIndexInWindow(musicListIndex)
         val scrollView = musicScrollView ?: return
-        val row = trackRowViews.getOrNull(musicListIndex) ?: return
+        val localIndex = musicListIndex - virtualStart
+        val row = trackRowViews.getOrNull(localIndex) ?: return
         scrollView.post {
             val rowTop = row.top
             val rowBottom = row.bottom
@@ -1504,7 +1537,10 @@ class OverlayService : Service() {
     private fun scrollToPlaying() {
         val scrollView = musicScrollView ?: return
         val playingIndex = trackList.indexOfFirst { it.mediaId == currentlyPlayingMediaId }
-        val row = trackRowViews.getOrNull(playingIndex) ?: return
+        if (playingIndex < 0) return
+        ensureIndexInWindow(playingIndex)
+        val localIndex = playingIndex - virtualStart
+        val row = trackRowViews.getOrNull(localIndex) ?: return
         scrollView.post {
             scrollView.scrollTo(0, row.top)
         }
