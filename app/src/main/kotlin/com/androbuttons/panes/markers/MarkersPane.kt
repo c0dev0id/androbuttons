@@ -19,6 +19,7 @@ import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
+import com.androbuttons.common.sunkenInstrumentBg
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -57,6 +58,8 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     private var pendingListener: LocationListener? = null
     private val handler = Handler(Looper.getMainLooper())
     private var pendingLabel: String? = null
+    private var pendingButton: TextView? = null
+    private var pendingOriginalLabel: String? = null
 
     // ---- PaneContent --------------------------------------------------------
 
@@ -74,11 +77,24 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             setOnTouchListener(bridge.makePaneSwipeListener())
         }
 
+        fun wrapSunken(view: View) = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            addView(view)
+        }
+
         markerButtons.clear()
         MARKER_LABELS.forEachIndexed { i, label ->
             val btn = buildMarkerButton(label, isFocused = i == 0)
             markerButtons.add(btn)
-            pane.addView(btn)
+            pane.addView(wrapSunken(btn))
         }
         return pane
     }
@@ -130,7 +146,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
+            )
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
             isClickable = true
             setOnClickListener { onMarkerTapped(label) }
@@ -150,7 +166,13 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     private fun onMarkerTapped(label: String) {
         if (pendingLabel != null) return
         val locMgr = locationManager ?: return
+
+        val btnIndex = MARKER_LABELS.indexOf(label)
+        val btn = markerButtons.getOrNull(btnIndex) ?: return
+
         pendingLabel = label
+        pendingButton = btn
+        pendingOriginalLabel = label
 
         val lastKnown = try {
             locMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER)
@@ -162,6 +184,8 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             generateAndShare(label, lastKnown)
             return
         }
+
+        startCountdown(10)
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
@@ -200,12 +224,28 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         }
     }
 
+    private fun startCountdown(secondsLeft: Int) {
+        val btn = pendingButton ?: return
+        btn.text = "Waiting for GPS $secondsLeft…"
+        if (secondsLeft > 0) {
+            handler.postDelayed({ startCountdown(secondsLeft - 1) }, 1_000L)
+        }
+    }
+
     private fun cancelPendingGps() {
         handler.removeCallbacksAndMessages(null)
         pendingListener?.let {
             try { locationManager?.removeUpdates(it) } catch (_: Exception) {}
             pendingListener = null
         }
+        pendingButton?.let { btn ->
+            val idx = MARKER_LABELS.indexOf(pendingOriginalLabel)
+            btn.background = buttonBg(idx == focusIndex, ctx)
+            btn.text = pendingOriginalLabel ?: ""
+            btn.setTextColor(Color.WHITE)
+        }
+        pendingButton = null
+        pendingOriginalLabel = null
         pendingLabel = null
     }
 
@@ -215,6 +255,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         val gpxFile = writeGpxFile(label, location)
         val uri = FileProvider.getUriForFile(ctx, AUTHORITY, gpxFile)
         sendGpxUri(uri)
+        showSuccess()
     }
 
     private fun writeGpxFile(label: String, location: Location): File {
@@ -258,16 +299,36 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         showGpsError()
     }
 
-    // ---- Error feedback -----------------------------------------------------
+    // ---- GPS feedback -------------------------------------------------------
+
+    private fun showSuccess() {
+        val btn = pendingButton ?: return
+        val originalLabel = pendingOriginalLabel ?: return
+        pendingButton = null
+        pendingOriginalLabel = null
+        btn.text = "Marker created"
+        btn.setBackgroundColor(Color.parseColor("#388E3C"))
+        btn.setTextColor(Color.WHITE)
+        handler.postDelayed({
+            val idx = MARKER_LABELS.indexOf(originalLabel)
+            btn.background = buttonBg(idx == focusIndex, ctx)
+            btn.text = originalLabel
+            btn.setTextColor(Color.WHITE)
+        }, 2_000L)
+    }
 
     private fun showGpsError() {
-        val btn = markerButtons.getOrNull(focusIndex) ?: return
-        val original = btn.text
+        val btn = pendingButton ?: return
+        val originalLabel = pendingOriginalLabel ?: return
+        pendingButton = null
+        pendingOriginalLabel = null
         btn.text = "No GPS signal"
         btn.setTextColor(Color.parseColor("#F57C00"))
         handler.postDelayed({
-            btn.text = original
+            val idx = MARKER_LABELS.indexOf(originalLabel)
+            btn.background = buttonBg(idx == focusIndex, ctx)
+            btn.text = originalLabel
             btn.setTextColor(Color.WHITE)
-        }, 2000L)
+        }, 2_000L)
     }
 }

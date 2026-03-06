@@ -19,6 +19,7 @@ import com.androbuttons.common.Theme
 import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
+import com.androbuttons.common.sunkenInstrumentBg
 
 class AppsPane(private val bridge: ServiceBridge) : PaneContent {
 
@@ -120,12 +121,25 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
         appListIndex = 0
         appButtonViews.clear()
 
+        fun wrapSunken(view: View) = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            addView(view)
+        }
+
         val buttonList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         appButtonList = buttonList
         appEntries.forEachIndexed { i, entry ->
             val btn = buildAppButton(entry, i == 0, i)
             appButtonViews.add(btn)
-            buttonList.addView(btn)
+            buttonList.addView(wrapSunken(btn))
         }
 
         val scrollView = ScrollView(ctx).apply {
@@ -135,7 +149,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
         appScrollView = scrollView
 
         pane.addView(scrollView)
-        pane.addView(TextView(ctx).apply {
+        val configureBtn = TextView(ctx).apply {
             text = "Configure"
             textSize = 16f
             setTypeface(null, Typeface.BOLD)
@@ -145,10 +159,22 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 8.dp() }
+            )
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
             isClickable = true
             setOnClickListener { showConfigureView() }
+        }
+        pane.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            addView(configureBtn)
         })
     }
 
@@ -214,7 +240,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             addView(rowContainer)
         })
-        pane.addView(TextView(ctx).apply {
+        val saveBtn = TextView(ctx).apply {
             text = "Save"
             textSize = 16f
             setTypeface(null, Typeface.BOLD)
@@ -224,7 +250,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 8.dp() }
+            )
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
             isClickable = true
             setOnClickListener {
@@ -234,6 +260,18 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                 saveSelectedApps(selected)
                 showAppsView()
             }
+        }
+        pane.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            addView(saveBtn)
         })
     }
 
@@ -248,7 +286,7 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
+            )
             background = buttonBg(isFocused, ctx)
             isClickable = true
 

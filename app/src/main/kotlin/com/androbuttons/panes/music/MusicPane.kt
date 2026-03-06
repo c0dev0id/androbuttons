@@ -27,9 +27,11 @@ import com.androbuttons.R
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
+import com.androbuttons.common.bezeledBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
 import com.androbuttons.common.roundedBg
+import com.androbuttons.common.sunkenInstrumentBg
 
 class MusicPane(private val bridge: ServiceBridge) : PaneContent {
 
@@ -122,7 +124,7 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
         // --- Player card ---
         playerCardView = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(Theme.playerArea, 12, ctx)
+            background = bezeledBg(Theme.playerArea, 12, ctx)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0
             ).apply { weight = 1f; bottomMargin = 10.dp() }
@@ -191,7 +193,7 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
+            )
             background = buttonBg(musicFocus == MusicFocus.BUTTON, ctx)
             isClickable = true
             addView(playPauseIcon); addView(playPauseLabel)
@@ -200,7 +202,20 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
                 else           mediaController?.transportControls?.play()
             }
         }
-        pane.addView(playPauseButton)
+        // Wrap the play/pause button in a sunken bezel container
+        val playPauseWrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            addView(playPauseButton)
+        }
+        pane.addView(playPauseWrapper)
 
         // --- Playlist section ---
         playlistContainerView = LinearLayout(ctx).apply {

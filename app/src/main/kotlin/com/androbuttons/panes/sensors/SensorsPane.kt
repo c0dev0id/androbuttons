@@ -28,7 +28,9 @@ import com.androbuttons.LeanAngleView
 import com.androbuttons.SpeedometerView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
+import com.androbuttons.common.bezeledBg
 import com.androbuttons.common.dpWith
+import com.androbuttons.common.sunkenInstrumentBg
 
 class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
 
@@ -59,6 +61,16 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
         val inner = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+        }
+
+        // Wraps an instrument view in a near-black bezel container to look sunken into leather
+        fun wrapSunken(view: View, cornerDp: Int = 8) = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(cornerDp, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            addView(view)
         }
 
         fun sectionHeader(text: String) = TextView(ctx).apply {
@@ -99,7 +111,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        compassCol.addView(compassView)
+        compassCol.addView(wrapSunken(compassView!!))
         topRow.addView(compassCol)
 
         topRow.addView(Space(ctx).apply {
@@ -117,7 +129,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        forceCol.addView(forceDisplayView)
+        forceCol.addView(wrapSunken(forceDisplayView!!))
         topRow.addView(forceCol)
 
         inner.addView(topRow)
@@ -143,7 +155,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        speedCol.addView(speedometerView)
+        speedCol.addView(wrapSunken(speedometerView!!))
         speedRow.addView(speedCol)
 
         speedRow.addView(Space(ctx).apply {
@@ -161,7 +173,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        altCol.addView(altimeterView)
+        altCol.addView(wrapSunken(altimeterView!!))
         speedRow.addView(altCol)
 
         inner.addView(speedRow)
@@ -175,7 +187,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        inner.addView(leanAngleView)
+        inner.addView(wrapSunken(leanAngleView!!, 8))
 
         inner.addView(spacer())
 
@@ -187,7 +199,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        inner.addView(gpsInfoView)
+        inner.addView(wrapSunken(gpsInfoView!!, 4))
 
         inner.addView(TextView(ctx).apply {
             text = "CALIBRATE"
@@ -195,11 +207,9 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#F57C00"))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 24.dp().toFloat()
-                setColor(Color.parseColor("#1A1A1A"))
-                setStroke(2.dp(), Color.parseColor("#F57C00"))
+            background = bezeledBg(Color.parseColor("#1A1A1A"), 24, ctx).also { ld ->
+                // Add orange stroke on the inner layer
+                (ld.getDrawable(1) as? GradientDrawable)?.setStroke(2.dp(), Color.parseColor("#F57C00"))
             }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -287,7 +297,16 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
                         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                         SensorManager.getOrientation(rotationMatrix, orientationAngles)
                         val azimuthDeg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                        val rollDeg    = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
+                        // Extract gravity vector in device frame (negated third column of rotation matrix).
+                        // Using atan2(gx, hypot(gy,gz)) gives the lean angle around the device X axis
+                        // independently of how much the device is pitched towards the rider, so the
+                        // formula works correctly in handlebar and windshield mounts at any tilt angle.
+                        val gx = -rotationMatrix[6]
+                        val gy = -rotationMatrix[7]
+                        val gz = -rotationMatrix[8]
+                        val rollDeg = Math.toDegrees(
+                            Math.atan2(gx.toDouble(), Math.sqrt((gy * gy + gz * gz).toDouble()))
+                        ).toFloat()
                         currentRollDeg = rollDeg
 
                         val heading = if (gpsSpeedKmh > 5f && gpsBearing != null) gpsBearing!! else azimuthDeg
