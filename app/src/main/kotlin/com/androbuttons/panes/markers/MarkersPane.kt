@@ -19,6 +19,7 @@ import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
+import com.androbuttons.common.sunkenInstrumentBg
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,11 +72,24 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             setOnTouchListener(bridge.makePaneSwipeListener())
         }
 
+        fun wrapSunken(view: View) = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = sunkenInstrumentBg(8, ctx)
+            val pad = 3.dp()
+            setPadding(pad, pad, pad, pad)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            addView(view)
+        }
+
         markerButtons.clear()
         MARKER_LABELS.forEachIndexed { i, label ->
             val btn = buildMarkerButton(label, isFocused = i == 0)
             markerButtons.add(btn)
-            pane.addView(btn)
+            pane.addView(wrapSunken(btn))
         }
         return pane
     }
@@ -127,7 +141,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
+            )
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
             isClickable = true
             setOnClickListener { onMarkerTapped(label) }
