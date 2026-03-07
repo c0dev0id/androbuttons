@@ -111,8 +111,12 @@ class OverlayService : Service(), ServiceBridge {
     private var inPaneManager = false
     private var paneManagerView: View? = null
     private val managerOrder = mutableListOf<String>()
-    private var managerSortingMode = false
-    private var managerSortDragIndex = -1
+    private var managerSortingMode           = false
+    private var managerSortDragIndex         = -1
+    private var managerDragTargetIndex       = -1
+    private var managerDragGhost: View?      = null
+    private var managerDragGhostOffsetY      = 0f
+    private var managerDragGhostBaseScreenY  = 0f
     private val managerRowViews = mutableListOf<LinearLayout>()
     private var managerRowScroll: ScrollView? = null
     private var managerRowContainer: LinearLayout? = null
@@ -672,9 +676,57 @@ class OverlayService : Service(), ServiceBridge {
                 return true
             }
             override fun onLongPress(e: MotionEvent) {
+                val currentIndex = managerRowViews.indexOf(row)
+                if (currentIndex < 0) return
                 managerSortingMode = true
-                managerSortDragIndex = managerRowViews.indexOf(row)
-                row.background = buttonBg(true, this@OverlayService)
+                managerSortDragIndex = currentIndex
+                managerDragTargetIndex = currentIndex
+
+                // Capture finger offset from the row's top on screen
+                val rowLoc = IntArray(2)
+                row.getLocationOnScreen(rowLoc)
+                managerDragGhostOffsetY = e.rawY - rowLoc[1]
+
+                // Compute ghost's natural screen Y: placed at the bottom of the container
+                val container = managerRowContainer ?: return
+                val containerLoc = IntArray(2)
+                container.getLocationOnScreen(containerLoc)
+                managerDragGhostBaseScreenY = (containerLoc[1] + container.height).toFloat()
+
+                // Build a semi-transparent ghost copy of the row (no interaction)
+                val ghost = LinearLayout(this@OverlayService).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { bottomMargin = 4.dp() }
+                    background = buttonBg(true, this@OverlayService)
+                    alpha = 0.5f
+                    elevation = 8f
+                    translationY = (rowLoc[1] - managerDragGhostBaseScreenY)
+                    addView(TextView(this@OverlayService).apply {
+                        text = "≡"
+                        textSize = 18f
+                        setTextColor(Theme.textSecondary)
+                        gravity = Gravity.CENTER
+                        layoutParams = LinearLayout.LayoutParams(32.dp(), LinearLayout.LayoutParams.WRAP_CONTENT)
+                            .apply { marginEnd = 10.dp() }
+                    })
+                    addView(TextView(this@OverlayService).apply {
+                        text = displayName
+                        textSize = 14f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        setTextColor(if (isEnabled) Color.WHITE else Theme.textSecondary)
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                }
+                managerDragGhost = ghost
+                container.addView(ghost)
+
+                // Hide the original row as a placeholder (keeps its space)
+                row.visibility = View.INVISIBLE
                 managerRowScroll?.requestDisallowInterceptTouchEvent(true)
             }
         })
@@ -686,22 +738,55 @@ class OverlayService : Service(), ServiceBridge {
                 MotionEvent.ACTION_CANCEL -> v.isPressed = false
             }
             val handled = gestureDetector.onTouchEvent(event)
-            val rowIdx = managerRowViews.indexOf(row)
-            if (managerSortingMode && managerSortDragIndex == rowIdx) {
+            if (managerSortingMode) {
                 when (event.action) {
                     MotionEvent.ACTION_MOVE -> {
+                        val ghost = managerDragGhost
+                        if (ghost != null) {
+                            ghost.translationY = event.rawY - managerDragGhostOffsetY - managerDragGhostBaseScreenY
+                        }
                         val newIdx = getManagerIndexAtY(event.rawY)
-                        if (newIdx != managerSortDragIndex) {
-                            swapManagerRows(managerSortDragIndex, newIdx)
-                            managerSortDragIndex = newIdx
+                        if (newIdx != managerDragTargetIndex) {
+                            managerDragTargetIndex = newIdx
+                            managerRowViews.forEachIndexed { i, r ->
+                                r.background = if (i == newIdx && i != managerSortDragIndex) {
+                                    buttonBg(true, this@OverlayService)
+                                } else {
+                                    buttonBg(false, this@OverlayService)
+                                }
+                            }
                         }
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        // Remove ghost
+                        val container = managerRowContainer
+                        managerDragGhost?.let { container?.removeView(it) }
+                        managerDragGhost = null
+
+                        // Restore original row visibility
+                        row.visibility = View.VISIBLE
+
+                        // Commit the move
+                        val fromIdx = managerSortDragIndex
+                        val toIdx = managerDragTargetIndex.coerceIn(0, (managerRowViews.size - 1).coerceAtLeast(0))
+                        if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                            managerOrder.add(toIdx, managerOrder.removeAt(fromIdx))
+                            managerRowViews.add(toIdx, managerRowViews.removeAt(fromIdx))
+                        }
+
+                        // Rebuild container child order
+                        if (container != null) {
+                            container.removeAllViews()
+                            managerRowViews.forEach { container.addView(it) }
+                        }
+
+                        // Reset all row backgrounds
+                        managerRowViews.forEach { it.background = buttonBg(false, this@OverlayService) }
+
                         managerSortingMode = false
                         managerSortDragIndex = -1
+                        managerDragTargetIndex = -1
                         managerRowScroll?.requestDisallowInterceptTouchEvent(false)
-                        // Restore non-focused background
-                        row.background = buttonBg(false, this@OverlayService)
                     }
                 }
                 true
