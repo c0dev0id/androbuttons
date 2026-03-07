@@ -32,6 +32,7 @@ import com.androbuttons.common.dpWith
 import com.androbuttons.panes.apps.AppsPane
 import com.androbuttons.panes.markers.MarkersPane
 import com.androbuttons.panes.music.MusicPane
+import com.androbuttons.panes.pointers.PointersPane
 import com.androbuttons.panes.sensors.SensorsPane
 import com.androbuttons.panes.system.SystemPane
 
@@ -137,6 +138,7 @@ class OverlayService : Service(), ServiceBridge {
             AppsPane(bridge = this),
             SensorsPane(bridge = this),
             MarkersPane(bridge = this),
+            PointersPane(bridge = this),
             SystemPane(bridge = this)
         )
         createNotificationChannel()
