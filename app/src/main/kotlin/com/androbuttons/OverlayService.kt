@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.Animation
@@ -117,6 +118,11 @@ class OverlayService : Service(), ServiceBridge {
     private val managerRowViews = mutableListOf<LinearLayout>()
     private var managerRowScroll: ScrollView? = null
     private var managerRowContainer: LinearLayout? = null
+
+    // ---- IME / keyboard handling --------------------------------------------
+
+    private var imeListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+    private var lastKeyboardHeight: Int = 0
 
     // ---- Dimension helper ---------------------------------------------------
 
@@ -252,11 +258,14 @@ class OverlayService : Service(), ServiceBridge {
             gravity = Gravity.END or Gravity.TOP
             x = 0
             y = visibleStatusBarHeight
+            @Suppress("DEPRECATION")
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
         windowManager.addView(view, params)
         overlayView = view
+        attachImeListener(view)
         view.requestFocus()
         view.animate()
             .translationX(0f)
@@ -265,8 +274,28 @@ class OverlayService : Service(), ServiceBridge {
             .start()
     }
 
+    private fun attachImeListener(view: View) {
+        val listener = ViewTreeObserver.OnGlobalLayoutListener {
+            val visibleFrame = android.graphics.Rect()
+            view.getWindowVisibleDisplayFrame(visibleFrame)
+            val loc = IntArray(2)
+            view.getLocationOnScreen(loc)
+            val keyboardHeight = ((loc[1] + view.height) - visibleFrame.bottom).coerceAtLeast(0)
+            if (keyboardHeight == lastKeyboardHeight) return@OnGlobalLayoutListener
+            lastKeyboardHeight = keyboardHeight
+            rootContainer?.setPadding(0, 0, 0, keyboardHeight)
+        }
+        imeListener = listener
+        view.viewTreeObserver.addOnGlobalLayoutListener(listener)
+    }
+
     private fun removeOverlay() {
         overlayView?.let {
+            imeListener?.let { listener ->
+                try { it.viewTreeObserver.removeOnGlobalLayoutListener(listener) } catch (_: Exception) {}
+            }
+            imeListener = null
+            lastKeyboardHeight = 0
             try { windowManager.removeView(it) } catch (_: Exception) {}
             overlayView = null
         }
