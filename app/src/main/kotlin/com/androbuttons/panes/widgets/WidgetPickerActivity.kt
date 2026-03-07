@@ -245,25 +245,20 @@ class WidgetPickerActivity : AppCompatActivity() {
     }
 
     private fun onBound(info: AppWidgetProviderInfo) {
-        val configComponent = info.configure
-        if (configComponent != null) {
-            val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
-                component = configComponent
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingAppWidgetId)
-            }
-            // Attempt to launch the configure activity directly. On Android 11+ the
-            // AppWidget framework grants the host implicit visibility to configure
-            // activities, so startActivityForResult can succeed even when resolveActivity
-            // returns null. Only fall through to saveAndFinish() if the activity is
-            // genuinely unreachable (SecurityException / ActivityNotFoundException).
+        if (info.configure != null) {
+            // Use the host API to launch the configure activity. This routes through
+            // the system's AppWidgetServiceImpl which creates an IntentSender with
+            // the proper grants — bypassing Android 11+ package-visibility restrictions
+            // that break a manually constructed ACTION_APPWIDGET_CONFIGURE intent.
             try {
-                @Suppress("DEPRECATION")
-                startActivityForResult(intent, REQUEST_CONFIGURE)
+                AppWidgetHostManager.getHost(this)
+                    .startAppWidgetConfigureActivityForResult(this, pendingAppWidgetId, 0, REQUEST_CONFIGURE, null)
                 return  // wait for onActivityResult(REQUEST_CONFIGURE)
-            } catch (_: SecurityException) {
-                /* Not exported — add widget without initial configuration. */
             } catch (_: android.content.ActivityNotFoundException) {
-                /* Unreachable — add widget without initial configuration. */
+                // Configure activity is declared but unreachable — cannot configure this
+                // widget, so discard it rather than adding a broken, unconfigured widget.
+                releaseAndFinish()
+                return
             }
         }
         saveAndFinish()
