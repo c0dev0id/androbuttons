@@ -22,6 +22,8 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.TranslateAnimation
+import android.text.InputType
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -595,11 +597,15 @@ class OverlayService : Service(), ServiceBridge {
             addView(actionView)
         }
 
-        // Drag-to-reorder + single-tap toggle gesture (mirrors AppsPane exactly)
+        // Drag-to-reorder + single-tap toggle/rename gesture
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                if (!isWidget) toggleFixedPane(managerRowViews.indexOf(row), actionView, nameLabel)
+                if (isWidget) {
+                    startInlineRename(row, id)
+                } else {
+                    toggleFixedPane(managerRowViews.indexOf(row), actionView, nameLabel)
+                }
                 return true
             }
             override fun onLongPress(e: MotionEvent) {
@@ -640,6 +646,56 @@ class OverlayService : Service(), ServiceBridge {
         }
 
         return row
+    }
+
+    private fun startInlineRename(row: LinearLayout, paneId: String) {
+        // Find the name label (index 1: after drag handle)
+        val nameLabel = row.getChildAt(1) as? TextView ?: return
+        val currentName = nameLabel.text.toString()
+
+        val editText = EditText(this).apply {
+            setText(currentName)
+            setSelection(currentName.length)
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            background = null
+            layoutParams = nameLabel.layoutParams
+            setPadding(0, 0, 0, 0)
+        }
+
+        fun finishRename() {
+            val newTitle = editText.text.toString().trim().ifBlank { "Widgets" }
+            prefs.edit().putString("${paneId}_title", newTitle).apply()
+            val restored = TextView(this).apply {
+                text = newTitle
+                textSize = 14f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                layoutParams = editText.layoutParams
+            }
+            val idx = row.indexOfChild(editText)
+            if (idx >= 0) {
+                row.removeViewAt(idx)
+                row.addView(restored, idx)
+            }
+        }
+
+        editText.setOnEditorActionListener { _, _, _ ->
+            finishRename()
+            true
+        }
+        editText.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) finishRename()
+        }
+
+        val idx = row.indexOfChild(nameLabel)
+        if (idx >= 0) {
+            row.removeViewAt(idx)
+            row.addView(editText, idx)
+            editText.requestFocus()
+        }
     }
 
     private fun makeManagerCheckbox(checked: Boolean) = TextView(this).apply {
