@@ -21,6 +21,7 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.TranslateAnimation
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.ViewFlipper
@@ -72,9 +73,9 @@ class OverlayService : Service(), ServiceBridge {
     private var currentPane = 0
 
     private lateinit var viewFlipper: ViewFlipper
-    private var titleArrowLeft:  TextView?      = null
+    private var titleArrowLeft:  ImageView?     = null
     private var titleText:       TextView?      = null
-    private var titleArrowRight: TextView?      = null
+    private var titleArrowRight: ImageView?     = null
     private var titleLeftZone:   LinearLayout?  = null
     private var titleRightZone:  LinearLayout?  = null
     private val paneDots = mutableListOf<View>()
@@ -283,18 +284,20 @@ class OverlayService : Service(), ServiceBridge {
             )
         }
 
-        titleArrowLeft = TextView(this).apply {
-            text = "◀"; textSize = 13f
-            setTextColor(if (currentPane > 0) Theme.primary else Theme.inactiveBg)
+        titleArrowLeft = ImageView(this).apply {
+            setImageResource(R.drawable.ic_nav_left)
+            layoutParams = LinearLayout.LayoutParams(28.dp(), 28.dp())
+            setColorFilter(if (currentPane > 0) Theme.primary else Theme.inactiveBg)
         }
         titleText = TextView(this).apply {
             text = panes[currentPane].title; textSize = 14f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE); gravity = Gravity.CENTER_HORIZONTAL
         }
-        titleArrowRight = TextView(this).apply {
-            text = "▶"; textSize = 13f
-            setTextColor(if (currentPane < panes.size - 1) Theme.primary else Theme.inactiveBg)
+        titleArrowRight = ImageView(this).apply {
+            setImageResource(R.drawable.ic_nav_right)
+            layoutParams = LinearLayout.LayoutParams(28.dp(), 28.dp())
+            setColorFilter(if (currentPane < panes.size - 1) Theme.primary else Theme.inactiveBg)
         }
 
         titleLeftZone = LinearLayout(this).apply {
@@ -322,7 +325,17 @@ class OverlayService : Service(), ServiceBridge {
             setOnClickListener { if (currentPane < panes.size - 1) navigateToPane(currentPane + 1) }
         }
 
-        bar.addView(titleLeftZone); bar.addView(centerZone); bar.addView(titleRightZone)
+        fun verticalDivider() = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1.dp(), 24.dp()).apply {
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            setBackgroundColor(Color.parseColor("#33FFFFFF"))
+        }
+        bar.addView(titleLeftZone)
+        bar.addView(verticalDivider())
+        bar.addView(centerZone)
+        bar.addView(verticalDivider())
+        bar.addView(titleRightZone)
         wrapper.addView(bar)
 
         // Pane indicator dots
@@ -356,8 +369,8 @@ class OverlayService : Service(), ServiceBridge {
         titleText?.text = panes[currentPane].title
         val leftActive  = currentPane > 0
         val rightActive = currentPane < panes.size - 1
-        titleArrowLeft?.setTextColor(if (leftActive)  Theme.primary else Theme.inactiveBg)
-        titleArrowRight?.setTextColor(if (rightActive) Theme.primary else Theme.inactiveBg)
+        titleArrowLeft?.setColorFilter(if (leftActive)  Theme.primary else Theme.inactiveBg)
+        titleArrowRight?.setColorFilter(if (rightActive) Theme.primary else Theme.inactiveBg)
         titleLeftZone?.alpha  = if (leftActive)  1f else 0.4f
         titleRightZone?.alpha = if (rightActive) 1f else 0.4f
         paneDots.forEachIndexed { i, dot ->
