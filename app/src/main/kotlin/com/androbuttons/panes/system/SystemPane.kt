@@ -3,8 +3,13 @@ package com.androbuttons.panes.system
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
+import android.telephony.TelephonyManager
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -12,7 +17,10 @@ import android.widget.Space
 import android.widget.TextView
 import com.androbuttons.CpuCoresView
 import com.androbuttons.DiskIoView
+import com.androbuttons.DiskSpaceView
 import com.androbuttons.MemoryBarView
+import com.androbuttons.NetworkIoView
+import com.androbuttons.SignalView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.dpWith
@@ -26,9 +34,12 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     private val ctx: Context get() = bridge.context
     private fun Int.dp() = dpWith(ctx)
 
-    private var cpuCoresView: CpuCoresView? = null
-    private var memoryBarView: MemoryBarView? = null
-    private var diskIoView: DiskIoView? = null
+    private var cpuCoresView:   CpuCoresView?   = null
+    private var memoryBarView:  MemoryBarView?  = null
+    private var diskSpaceView:  DiskSpaceView?  = null
+    private var diskIoView:     DiskIoView?     = null
+    private var networkIoView:  NetworkIoView?  = null
+    private var signalView:     SignalView?      = null
 
     private var monitor: SystemMonitor? = null
 
@@ -58,37 +69,35 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 8.dp())
         }
 
-        // --- CPU ---
-        inner.addView(sectionHeader("CPU"))
-        cpuCoresView = CpuCoresView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+        fun <V : View> addSection(header: String, view: V): V {
+            inner.addView(sectionHeader(header))
+            inner.addView(view.apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            })
+            inner.addView(spacer())
+            return view
         }
-        inner.addView(cpuCoresView)
-        inner.addView(spacer())
+
+        // --- CPU ---
+        cpuCoresView  = addSection("CPU",        CpuCoresView(ctx))
 
         // --- Memory ---
-        inner.addView(sectionHeader("MEMORY"))
-        memoryBarView = MemoryBarView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        inner.addView(memoryBarView)
-        inner.addView(spacer())
+        memoryBarView = addSection("MEMORY",     MemoryBarView(ctx))
+
+        // --- Disk Space ---
+        diskSpaceView = addSection("DISK SPACE", DiskSpaceView(ctx))
 
         // --- Disk I/O ---
-        inner.addView(sectionHeader("DISK I/O"))
-        diskIoView = DiskIoView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        inner.addView(diskIoView)
+        diskIoView    = addSection("DISK I/O",   DiskIoView(ctx))
+
+        // --- Network I/O ---
+        networkIoView = addSection("NETWORK I/O", NetworkIoView(ctx))
+
+        // --- Signal ---
+        signalView    = addSection("SIGNAL",     SignalView(ctx))
 
         startMonitor()
 
@@ -108,7 +117,8 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     override fun onPaused() {
         monitor?.stop()
         monitor = null
-        diskIoView?.maxSeen = 1f
+        diskIoView?.maxSeen    = 1f
+        networkIoView?.maxSeen = 1f
     }
 
     override fun onDestroy() {
@@ -134,22 +144,29 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
 
         private val handler = Handler(Looper.getMainLooper())
 
-        // CPU: previous snapshot per core — [user, nice, system, idle, iowait, irq, softirq, steal]
+        // CPU: previous snapshot per core
         private var prevCpuStats: Array<LongArray>? = null
 
-        // Disk: previous [sectorsRead, sectorsWritten] and timestamp
-        private var prevDiskRead:    Long = 0L
-        private var prevDiskWrite:   Long = 0L
-        private var prevDiskTimeMs:  Long = 0L
-        private var diskDevice:      String? = null
+        // Disk I/O state
+        private var prevDiskRead:   Long   = 0L
+        private var prevDiskWrite:  Long   = 0L
+        private var prevDiskTimeMs: Long   = 0L
+        private var diskDevice:     String? = null
+
+        // Network I/O state
+        private var prevNetRxBytes:  Long = 0L
+        private var prevNetTxBytes:  Long = 0L
+        private var prevNetTimeMs:   Long = 0L
 
         private val poller = object : Runnable {
             override fun run() {
-                // Read all proc data on a background thread, then post results to main thread
                 Thread {
-                    val cpuResult  = readCpuUsages()
-                    val memResult  = readMemInfo()
-                    val diskResult = readDiskIO()
+                    val cpuResult     = readCpuUsages()
+                    val memResult     = readMemInfo()
+                    val diskSpResult  = readDiskSpace()
+                    val diskIoResult  = readDiskIO()
+                    val netResult     = readNetworkIO()
+                    val signalResult  = readSignalStrengths()
 
                     handler.post {
                         cpuResult?.let { usages ->
@@ -159,9 +176,17 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                         memResult?.let { (used, cached, total) ->
                             memoryBarView?.update(used, cached, total)
                         }
-                        diskResult?.let { (readMBps, writeMBps) ->
+                        diskSpResult?.let { (used, total) ->
+                            diskSpaceView?.update(used, total)
+                        }
+                        diskIoResult?.let { (readMBps, writeMBps) ->
                             diskIoView?.update(readMBps, writeMBps)
                         }
+                        netResult?.let { (rxKBps, txKBps) ->
+                            networkIoView?.update(rxKBps, txKBps)
+                        }
+                        val (wifiRssi, mobileDbm) = signalResult
+                        signalView?.update(wifiRssi, mobileDbm)
                     }
                 }.start()
 
@@ -169,108 +194,106 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
             }
         }
 
-        fun start() {
-            handler.post(poller)
-        }
+        fun start() { handler.post(poller) }
+        fun stop()  { handler.removeCallbacks(poller) }
 
-        fun stop() {
-            handler.removeCallbacks(poller)
-        }
-
-        // Parse /proc/stat, compute per-core usage fractions
+        // ---------------------------------------------------------------------
+        // /proc/stat  →  per-core usage fractions
+        // ---------------------------------------------------------------------
         private fun readCpuUsages(): FloatArray? {
             return try {
                 val lines = BufferedReader(FileReader("/proc/stat")).use { it.readLines() }
-                // Lines starting with "cpu0", "cpu1", … (skip aggregate "cpu" line)
                 val coreLines = lines.filter { it.matches(Regex("cpu\\d+.*")) }
                 if (coreLines.isEmpty()) return null
 
                 val currentStats = Array(coreLines.size) { i ->
                     val parts = coreLines[i].split(" ").drop(1).map { it.toLongOrNull() ?: 0L }
                     LongArray(8) { j -> parts.getOrElse(j) { 0L } }
-                    // indices: 0=user 1=nice 2=system 3=idle 4=iowait 5=irq 6=softirq 7=steal
                 }
 
                 val prev = prevCpuStats
                 prevCpuStats = currentStats
-
                 if (prev == null || prev.size != currentStats.size) return null
 
                 FloatArray(currentStats.size) { i ->
-                    val cur = currentStats[i]
-                    val prv = prev[i]
-                    val idleCur   = cur[3] + cur[4]   // idle + iowait
-                    val idlePrev  = prv[3] + prv[4]
-                    val totalCur  = cur.sum()
-                    val totalPrev = prv.sum()
-                    val dTotal = totalCur - totalPrev
-                    val dIdle  = idleCur  - idlePrev
+                    val cur = currentStats[i]; val prv = prev[i]
+                    val idleCur  = cur[3] + cur[4]
+                    val idlePrev = prv[3] + prv[4]
+                    val dTotal   = cur.sum() - prv.sum()
+                    val dIdle    = idleCur - idlePrev
                     if (dTotal <= 0L) 0f else (1f - dIdle.toFloat() / dTotal).coerceIn(0f, 1f)
                 }
-            } catch (_: Exception) {
-                null
-            }
+            } catch (_: Exception) { null }
         }
 
-        // Parse /proc/meminfo, return (usedMb, cachedMb, totalMb)
+        // ---------------------------------------------------------------------
+        // /proc/meminfo  →  (usedMb, cachedMb, totalMb)
+        // ---------------------------------------------------------------------
         private fun readMemInfo(): Triple<Long, Long, Long>? {
             return try {
                 val map = mutableMapOf<String, Long>()
                 BufferedReader(FileReader("/proc/meminfo")).use { reader ->
                     reader.lineSequence().forEach { line ->
                         val parts = line.split(Regex("\\s+"))
-                        if (parts.size >= 2) {
-                            val key = parts[0].trimEnd(':')
-                            val value = parts[1].toLongOrNull() ?: 0L
-                            map[key] = value
-                        }
+                        if (parts.size >= 2) map[parts[0].trimEnd(':')] = parts[1].toLongOrNull() ?: 0L
                     }
                 }
-                val total        = (map["MemTotal"]       ?: return null) / 1024L
-                val free         = (map["MemFree"]        ?: 0L) / 1024L
-                val buffers      = (map["Buffers"]        ?: 0L) / 1024L
-                val cached       = (map["Cached"]         ?: 0L) / 1024L
-                val sReclaimable = (map["SReclaimable"]   ?: 0L) / 1024L
-                val shmem        = (map["Shmem"]          ?: 0L) / 1024L
-
-                val cachedTotal = buffers + cached + sReclaimable - shmem
-                val used = total - free - buffers - (cached + sReclaimable - shmem)
-
+                val total        = (map["MemTotal"]     ?: return null) / 1024L
+                val free         = (map["MemFree"]      ?: 0L) / 1024L
+                val buffers      = (map["Buffers"]      ?: 0L) / 1024L
+                val cached       = (map["Cached"]       ?: 0L) / 1024L
+                val sReclaimable = (map["SReclaimable"] ?: 0L) / 1024L
+                val shmem        = (map["Shmem"]        ?: 0L) / 1024L
+                val cachedTotal  = buffers + cached + sReclaimable - shmem
+                val used         = total - free - buffers - (cached + sReclaimable - shmem)
                 Triple(used.coerceAtLeast(0L), cachedTotal.coerceAtLeast(0L), total)
-            } catch (_: Exception) {
-                null
-            }
+            } catch (_: Exception) { null }
         }
 
-        // Parse /proc/diskstats, return (readMBps, writeMBps)
+        // ---------------------------------------------------------------------
+        // StatFs  →  (usedBytes, totalBytes) for internal storage
+        // ---------------------------------------------------------------------
+        private fun readDiskSpace(): Pair<Long, Long>? {
+            return try {
+                val stat  = StatFs(Environment.getDataDirectory().path)
+                val total = stat.blockCountLong * stat.blockSizeLong
+                val free  = stat.availableBlocksLong * stat.blockSizeLong
+                Pair((total - free).coerceAtLeast(0L), total)
+            } catch (_: Exception) { null }
+        }
+
+        // ---------------------------------------------------------------------
+        // /proc/diskstats  →  (readMBps, writeMBps)
+        //
+        // Device detection is intentionally broad: sd[a-z], mmcblk\d+,
+        // nvme\d+n\d+, and dm-\d+ (device-mapper, common on encrypted Android).
+        // When multiple candidates exist, the one with the highest cumulative
+        // sector count (reads + writes) is chosen so the most-active storage
+        // path wins automatically.
+        // ---------------------------------------------------------------------
         private fun readDiskIO(): Pair<Float, Float>? {
             return try {
                 val lines = BufferedReader(FileReader("/proc/diskstats")).use { it.readLines() }
+                val parsed = lines.map { it.trim().split(Regex("\\s+")) }
 
-                // Find main block device on first call
                 if (diskDevice == null) {
-                    diskDevice = lines
-                        .map { it.trim().split(Regex("\\s+")) }
-                        .firstOrNull { parts ->
-                            parts.size >= 14 &&
-                            (parts[2].matches(Regex("sd[a-z]")) ||
-                             parts[2].matches(Regex("mmcblk\\d+")) ||
-                             parts[2].matches(Regex("nvme\\d+n\\d+")))
-                        }
-                        ?.getOrNull(2)
+                    val candidates = parsed.filter { parts ->
+                        parts.size >= 14 &&
+                        (parts[2].matches(Regex("sd[a-z]"))       ||
+                         parts[2].matches(Regex("mmcblk\\d+"))    ||
+                         parts[2].matches(Regex("nvme\\d+n\\d+")) ||
+                         parts[2].matches(Regex("dm-\\d+")))
+                    }
+                    diskDevice = candidates.maxByOrNull { parts ->
+                        (parts.getOrNull(5)?.toLongOrNull() ?: 0L) +
+                        (parts.getOrNull(9)?.toLongOrNull() ?: 0L)
+                    }?.getOrNull(2)
                 }
 
                 val device = diskDevice ?: return null
+                val parts  = parsed.firstOrNull { it.getOrNull(2) == device } ?: return null
 
-                val parts = lines
-                    .map { it.trim().split(Regex("\\s+")) }
-                    .firstOrNull { it.getOrNull(2) == device }
-                    ?: return null
-
-                // diskstats field layout (0-based after the 3 id fields):
-                // idx 3 = reads completed, idx 5 = sectors read
-                // idx 7 = writes completed, idx 9 = sectors written
-                val sectorsRead  = parts.getOrNull(5)?.toLongOrNull()  ?: return null
+                val sectorsRead  = parts.getOrNull(5)?.toLongOrNull() ?: return null
                 val sectorsWrite = parts.getOrNull(9)?.toLongOrNull() ?: return null
                 val nowMs = System.currentTimeMillis()
 
@@ -289,11 +312,78 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
 
                 val readMBps  = ((sectorsRead  - prevRead)  * 512L / 1_000_000f) / elapsedSec
                 val writeMBps = ((sectorsWrite - prevWrite) * 512L / 1_000_000f) / elapsedSec
-
                 Pair(readMBps.coerceAtLeast(0f), writeMBps.coerceAtLeast(0f))
-            } catch (_: Exception) {
-                null
-            }
+            } catch (_: Exception) { null }
+        }
+
+        // ---------------------------------------------------------------------
+        // /proc/net/dev  →  (rxKBps, txKBps) summed across all non-loopback ifaces
+        // ---------------------------------------------------------------------
+        private fun readNetworkIO(): Pair<Float, Float>? {
+            return try {
+                val lines = BufferedReader(FileReader("/proc/net/dev")).use { it.readLines() }
+                // Skip first 2 header lines; columns: iface | rx_bytes … | tx_bytes …
+                // rx_bytes = col 1, tx_bytes = col 9 (0-based after splitting on whitespace)
+                var totalRx = 0L
+                var totalTx = 0L
+                for (line in lines.drop(2)) {
+                    val trimmed = line.trim()
+                    if (trimmed.isEmpty()) continue
+                    // Format: "iface: bytes packets errs drop fifo frame compressed multicast  bytes …"
+                    val colonIdx = trimmed.indexOf(':')
+                    if (colonIdx < 0) continue
+                    val iface = trimmed.substring(0, colonIdx).trim()
+                    if (iface == "lo") continue
+                    val fields = trimmed.substring(colonIdx + 1).trim().split(Regex("\\s+"))
+                    totalRx += fields.getOrNull(0)?.toLongOrNull() ?: 0L
+                    totalTx += fields.getOrNull(8)?.toLongOrNull() ?: 0L
+                }
+
+                val nowMs = System.currentTimeMillis()
+                val prevRx   = prevNetRxBytes
+                val prevTx   = prevNetTxBytes
+                val prevTime = prevNetTimeMs
+
+                prevNetRxBytes = totalRx
+                prevNetTxBytes = totalTx
+                prevNetTimeMs  = nowMs
+
+                if (prevTime == 0L) return Pair(0f, 0f)
+
+                val elapsedSec = (nowMs - prevTime) / 1000f
+                if (elapsedSec <= 0f) return Pair(0f, 0f)
+
+                val rxKBps = ((totalRx - prevRx).coerceAtLeast(0L) / 1024f) / elapsedSec
+                val txKBps = ((totalTx - prevTx).coerceAtLeast(0L) / 1024f) / elapsedSec
+                Pair(rxKBps, txKBps)
+            } catch (_: Exception) { null }
+        }
+
+        // ---------------------------------------------------------------------
+        // WifiManager + TelephonyManager  →  (wifiRssi?, mobileDbm?)
+        // ---------------------------------------------------------------------
+        private fun readSignalStrengths(): Pair<Int?, Int?> {
+            val wifiRssi: Int? = try {
+                @Suppress("DEPRECATION")
+                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                @Suppress("DEPRECATION")
+                val rssi = wm?.connectionInfo?.rssi
+                // WifiInfo.INVALID_RSSI == -127; values <= -127 mean not connected
+                if (rssi == null || rssi == Int.MIN_VALUE || rssi <= -127) null else rssi
+            } catch (_: Exception) { null }
+
+            val mobileDbm: Int? = try {
+                // getCellSignalStrengths() requires API 29 (Q)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                    tm?.signalStrength?.cellSignalStrengths?.firstOrNull()?.dbm
+                        ?.takeIf { it > Int.MIN_VALUE && it > -200 }
+                } else {
+                    null
+                }
+            } catch (_: SecurityException) { null } catch (_: Exception) { null }
+
+            return Pair(wifiRssi, mobileDbm)
         }
     }
 }
