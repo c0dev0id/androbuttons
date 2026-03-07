@@ -238,21 +238,24 @@ class WidgetPickerActivity : AppCompatActivity() {
     private fun onBound(info: AppWidgetProviderInfo) {
         val configComponent = info.configure
         if (configComponent != null) {
-            @Suppress("DEPRECATION")
             val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
                 component = configComponent
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingAppWidgetId)
             }
-            try {
-                @Suppress("DEPRECATION")
-                startActivityForResult(intent, REQUEST_CONFIGURE)
-            } catch (_: Exception) {
-                // Configure activity unavailable or not exported — save without configuration.
-                saveAndFinish()
+            // Check visibility first (prevents ActivityNotFoundException on Android 11+).
+            // If resolvable, attempt to start; catch only SecurityException for the rare
+            // case where the activity exists but is not exported.
+            if (packageManager.resolveActivity(intent, 0) != null) {
+                try {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(intent, REQUEST_CONFIGURE)
+                    return
+                } catch (_: SecurityException) {
+                    // Activity declared but not exported; fall through to saveAndFinish.
+                }
             }
-        } else {
-            saveAndFinish()
         }
+        saveAndFinish()
     }
 
     private fun saveAndFinish() {
