@@ -641,7 +641,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 locationMgr.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER, 500L, 0f, locationListener
                 )
-            } catch (_: SecurityException) {}
+            } catch (_: Exception) {}
         }
 
         fun stop() {
