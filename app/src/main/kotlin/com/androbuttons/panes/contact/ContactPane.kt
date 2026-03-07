@@ -1,12 +1,16 @@
-package com.androbuttons.panes.message
+package com.androbuttons.panes.contact
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.provider.ContactsContract
 import android.telephony.SmsManager
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -20,15 +24,15 @@ import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
 
-class MessagePane(private val bridge: ServiceBridge) : PaneContent {
+class ContactPane(private val bridge: ServiceBridge) : PaneContent {
 
-    override val title = "Message"
+    override val title = "Contact"
 
     private val ctx: Context get() = bridge.context
     private fun Int.dp() = dpWith(ctx)
 
     private companion object {
-        const val KEY_MSG_CONTACTS  = "msg_contacts"
+        const val KEY_CONTACTS     = "contact_contacts"
         const val KEY_MSG_TEMPLATES = "msg_templates"
     }
 
@@ -39,7 +43,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
 
     // ---- View state ---------------------------------------------------------
 
-    private enum class ViewState { MAIN, CONFIGURE_CONTACTS, CONFIGURE_MESSAGES, SELECT_MESSAGE }
+    private enum class ViewState { MAIN, ACTION, CONFIGURE_CONTACTS, CONFIGURE_MESSAGES, SELECT_MESSAGE }
     private var currentView = ViewState.MAIN
 
     // ---- State --------------------------------------------------------------
@@ -47,6 +51,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
     private val contactEntries  = mutableListOf<ContactEntry>()
     private val templates       = mutableListOf<MessageTemplate>()
     private var listIndex       = 0
+    private var actionIndex     = 0   // 0 = Call, 1 = Message
     private var msgListIndex    = 0
     private var selectedContact: ContactEntry? = null
 
@@ -54,6 +59,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
     private data class CardViews(val root: LinearLayout, val textTv: TextView)
 
     private val buttonViews  = mutableListOf<ButtonViews>()
+    private val actionButtonViews = mutableListOf<LinearLayout>()
     private val msgCardViews = mutableListOf<CardViews>()
     private var contactScrollView: ScrollView? = null
     private var msgScrollView: ScrollView? = null
@@ -80,6 +86,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
     override fun onResumed() {
         listIndex = 0
         msgListIndex = 0
+        actionIndex = 0
         selectedContact = null
         currentView = ViewState.MAIN
         showMainView()
@@ -92,6 +99,13 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
                     listIndex--
                     refreshContactList()
                     scrollContactToSelected()
+                }
+                true
+            }
+            ViewState.ACTION -> {
+                if (actionIndex > 0) {
+                    actionIndex--
+                    refreshActionButtons()
                 }
                 true
             }
@@ -117,6 +131,13 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
                 }
                 true
             }
+            ViewState.ACTION -> {
+                if (actionIndex < actionButtonViews.size - 1) {
+                    actionIndex++
+                    refreshActionButtons()
+                }
+                true
+            }
             ViewState.SELECT_MESSAGE -> {
                 if (msgCardViews.isNotEmpty() && msgListIndex < msgCardViews.size - 1) {
                     msgListIndex++
@@ -133,7 +154,15 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
         return when (currentView) {
             ViewState.MAIN -> {
                 val entry = contactEntries.getOrNull(listIndex) ?: return true
-                openSelectMessage(entry)
+                openActionView(entry)
+                true
+            }
+            ViewState.ACTION -> {
+                val contact = selectedContact ?: return true
+                when (actionIndex) {
+                    0 -> executeCall(contact)
+                    1 -> openSelectMessage(contact)
+                }
                 true
             }
             ViewState.SELECT_MESSAGE -> {
@@ -148,9 +177,14 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
 
     override fun onCancel(): Boolean {
         return when (currentView) {
-            ViewState.SELECT_MESSAGE -> {
+            ViewState.ACTION -> {
                 selectedContact = null
                 showMainView()
+                true
+            }
+            ViewState.SELECT_MESSAGE -> {
+                val contact = selectedContact ?: run { showMainView(); return true }
+                openActionView(contact)
                 true
             }
             ViewState.MAIN -> false  // let overlay close
@@ -199,6 +233,128 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
         })
     }
 
+    // ---- Action view (Call or Message picker) --------------------------------
+
+    private fun openActionView(contact: ContactEntry) {
+        currentView = ViewState.ACTION
+        selectedContact = contact
+        actionIndex = 0
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+        actionButtonViews.clear()
+
+        pane.addView(TextView(ctx).apply {
+            text = "${contact.name}\n${contact.typeLabel}: ${contact.number}"
+            textSize = 14f
+            setTextColor(Theme.textSecondary)
+            gravity = Gravity.CENTER
+            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 12.dp() }
+        })
+
+        val callBtn = buildActionPickerButton("Call ${contact.name}", isFocused = true) {
+            executeCall(contact)
+        }
+        val msgBtn = buildActionPickerButton("Message ${contact.name}", isFocused = false) {
+            openSelectMessage(contact)
+        }
+
+        actionButtonViews.add(callBtn)
+        actionButtonViews.add(msgBtn)
+        pane.addView(callBtn)
+        pane.addView(msgBtn)
+
+        pane.addView(makeActionButton("Cancel", Theme.inactiveBg, Theme.textSecondary) {
+            selectedContact = null
+            showMainView()
+        })
+    }
+
+    private fun buildActionPickerButton(label: String, isFocused: Boolean, onClick: () -> Unit): LinearLayout {
+        val tv = TextView(ctx).apply {
+            text = label
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(12.dp(), 20.dp(), 12.dp(), 20.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            background = buttonBg(isFocused, ctx)
+            isClickable = true
+            addView(tv)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun refreshActionButtons() {
+        actionButtonViews.forEachIndexed { i, btn ->
+            btn.background = buttonBg(i == actionIndex, ctx)
+        }
+    }
+
+    // ---- Call ---------------------------------------------------------------
+
+    private fun executeCall(contact: ContactEntry) {
+        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${contact.number}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+        bridge.hideOverlay()
+    }
+
+    // ---- Select message view ------------------------------------------------
+
+    private fun openSelectMessage(contact: ContactEntry) {
+        currentView = ViewState.SELECT_MESSAGE
+        selectedContact = contact
+        msgListIndex = 0
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+        msgCardViews.clear()
+
+        pane.addView(TextView(ctx).apply {
+            text = "Send to: ${contact.name}"
+            textSize = 14f
+            setTextColor(Theme.textSecondary)
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        })
+
+        val cardList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        templates.forEachIndexed { i, tmpl ->
+            val cv = buildMsgCard(tmpl, isFocused = i == 0)
+            msgCardViews.add(cv)
+            cardList.addView(cv.root)
+        }
+
+        val scroll = ScrollView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(cardList)
+        }
+        msgScrollView = scroll
+        pane.addView(scroll)
+
+        pane.addView(makeActionButton("Cancel", Theme.inactiveBg, Theme.textSecondary) {
+            openActionView(contact)
+        })
+    }
+
     // ---- Configure contacts view --------------------------------------------
 
     private fun showConfigureContactsView() {
@@ -229,52 +385,80 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
 
         val rowContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
-        allContacts.forEach { entry ->
-            val key = contactKey(entry)
-            val checkbox = makeCheckbox(checkedState[key] == true)
+        fun buildRows(filter: String) {
+            rowContainer.removeAllViews()
+            val filtered = if (filter.isBlank()) allContacts
+                           else allContacts.filter { it.name.contains(filter, ignoreCase = true) }
 
-            val row = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(8.dp(), 10.dp(), 8.dp(), 10.dp())
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = 2.dp() }
+            filtered.forEach { entry ->
+                val key = contactKey(entry)
+                val checkbox = makeCheckbox(checkedState[key] == true)
 
-                addView(checkbox)
-
-                addView(LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(8.dp(), 10.dp(), 8.dp(), 10.dp())
                     layoutParams = LinearLayout.LayoutParams(
-                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    addView(TextView(ctx).apply {
-                        text = entry.name
-                        textSize = 14f
-                        setTextColor(Color.WHITE)
-                    })
-                    addView(TextView(ctx).apply {
-                        text = "${entry.typeLabel}: ${entry.number}"
-                        textSize = 12f
-                        setTextColor(Theme.textSecondary)
-                    })
-                })
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { bottomMargin = 2.dp() }
 
-                setOnClickListener {
-                    val nowChecked = !(checkedState[key] ?: false)
-                    checkedState[key] = nowChecked
-                    (checkbox as TextView).text = if (nowChecked) "✓" else ""
-                    checkbox.background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = 4.dp().toFloat()
-                        if (nowChecked) setColor(Theme.primary)
-                        else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
+                    addView(checkbox)
+
+                    addView(LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        addView(TextView(ctx).apply {
+                            text = entry.name
+                            textSize = 14f
+                            setTextColor(Color.WHITE)
+                        })
+                        addView(TextView(ctx).apply {
+                            text = "${entry.typeLabel}: ${entry.number}"
+                            textSize = 12f
+                            setTextColor(Theme.textSecondary)
+                        })
+                    })
+
+                    setOnClickListener {
+                        val nowChecked = !(checkedState[key] ?: false)
+                        checkedState[key] = nowChecked
+                        (checkbox as TextView).text = if (nowChecked) "✓" else ""
+                        checkbox.background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = 4.dp().toFloat()
+                            if (nowChecked) setColor(Theme.primary)
+                            else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
+                        }
                     }
                 }
+                rowContainer.addView(row)
             }
-            rowContainer.addView(row)
         }
 
+        buildRows("")
+
+        val filterField = EditText(ctx).apply {
+            hint = "Filter..."
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Theme.textSecondary)
+            inputType = InputType.TYPE_CLASS_TEXT
+            setBackgroundColor(Color.parseColor("#FF3D3D3D"))
+            setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) { buildRows(s?.toString() ?: "") }
+            })
+        }
+
+        pane.addView(filterField)
         pane.addView(ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -394,51 +578,6 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
         })
     }
 
-    // ---- Select message view ------------------------------------------------
-
-    private fun openSelectMessage(contact: ContactEntry) {
-        currentView = ViewState.SELECT_MESSAGE
-        selectedContact = contact
-        msgListIndex = 0
-        val pane = paneRoot ?: return
-        pane.removeAllViews()
-        msgCardViews.clear()
-
-        pane.addView(TextView(ctx).apply {
-            text = "Send to: ${contact.name}"
-            textSize = 14f
-            setTextColor(Theme.textSecondary)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 8.dp() }
-        })
-
-        val cardList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-
-        templates.forEachIndexed { i, tmpl ->
-            val cv = buildMsgCard(tmpl, isFocused = i == 0)
-            msgCardViews.add(cv)
-            cardList.addView(cv.root)
-        }
-
-        val scroll = ScrollView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            addView(cardList)
-        }
-        msgScrollView = scroll
-        pane.addView(scroll)
-
-        pane.addView(makeActionButton("Cancel", Theme.inactiveBg, Theme.textSecondary) {
-            selectedContact = null
-            showMainView()
-        })
-    }
-
     // ---- Contact button -----------------------------------------------------
 
     private fun buildContactButton(entry: ContactEntry, isFocused: Boolean): ButtonViews {
@@ -469,7 +608,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
                 if (idx < 0) return@setOnClickListener
                 listIndex = idx
                 refreshContactList()
-                openSelectMessage(contactEntries[idx])
+                openActionView(contactEntries[idx])
             }
         }
         return ButtonViews(root, nameTv, subTv)
@@ -590,7 +729,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
     private fun contactKey(e: ContactEntry) = "${e.name}|${e.typeLabel}|${e.number}"
 
     private fun loadContacts(): List<ContactEntry> {
-        val raw = bridge.getStringPref(KEY_MSG_CONTACTS, null) ?: return emptyList()
+        val raw = bridge.getStringPref(KEY_CONTACTS, null) ?: return emptyList()
         return raw.lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val parts = line.split("|")
             if (parts.size >= 3) ContactEntry(parts[0], parts[1], parts.drop(2).joinToString("|"))
@@ -599,7 +738,7 @@ class MessagePane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     private fun saveContacts(contacts: List<ContactEntry>) {
-        bridge.putStringPref(KEY_MSG_CONTACTS, contacts.joinToString("\n") { contactKey(it) })
+        bridge.putStringPref(KEY_CONTACTS, contacts.joinToString("\n") { contactKey(it) })
     }
 
     private fun loadTemplates(): List<MessageTemplate> {
