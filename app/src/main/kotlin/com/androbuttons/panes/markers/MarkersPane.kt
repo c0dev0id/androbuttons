@@ -311,7 +311,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
 
         val lastKnown = try {
             locMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-        } catch (_: SecurityException) { null }
+        } catch (_: Exception) { null }
 
         val now = System.currentTimeMillis()
         if (lastKnown != null && lastKnown.time > 0 && (now - lastKnown.time) < FRESHNESS_MS) {
@@ -353,7 +353,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
                 Looper.getMainLooper()
             )
             handler.postDelayed(timeoutRunnable, GPS_TIMEOUT_MS)
-        } catch (_: SecurityException) {
+        } catch (_: Exception) {
             pendingLabel = null
             showGpsError()
         }

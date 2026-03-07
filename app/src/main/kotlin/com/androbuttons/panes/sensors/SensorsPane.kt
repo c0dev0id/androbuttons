@@ -362,7 +362,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             try {
                 locationMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, locationListener)
                 locationMgr.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
-            } catch (_: SecurityException) { /* GPS permission denied — degrade gracefully */ }
+            } catch (_: Exception) { /* GPS unavailable or permission denied — degrade gracefully */ }
         }
 
         fun stop() {
