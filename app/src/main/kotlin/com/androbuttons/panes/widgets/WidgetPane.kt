@@ -18,6 +18,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.content.ComponentName
+import android.view.ViewGroup
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
@@ -51,6 +53,10 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     // Parallel list: one wrapper view per hosted widget, in display order.
     private val slotWrappers = mutableListOf<LinearLayout>()
 
+    // Cache: keeps AppWidgetHostViews alive across showWidgetView() calls so that
+    // live RemoteViews are not lost when the pane is rebuilt (e.g. on onResumed()).
+    private val widgetViewCache = mutableMapOf<Int, AppWidgetHostView>()
+
     // ---- PaneContent --------------------------------------------------------
 
     override fun buildView(): View {
@@ -77,6 +83,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     override fun onPaused() { /* AppWidgetHost lifecycle is handled by OverlayService */ }
     override fun onDestroy() {
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        widgetViewCache.clear()
     }
 
     // ---- Key navigation -----------------------------------------------------
@@ -121,15 +128,19 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     override fun onCancel(): Boolean {
         if (inConfigureView) return false
         if (focusIndex < 0 || focusIndex >= slotWrappers.size) return false
-        // Remove the focused widget
-        val ids = loadWidgetIds().toMutableList()
-        if (focusIndex >= ids.size) return false
-        val removedId = ids.removeAt(focusIndex)
-        bridge.appWidgetHost.deleteAppWidgetId(removedId)
-        saveWidgetIds(ids)
-        focusIndex = if (ids.isEmpty()) -1 else focusIndex.coerceAtMost(ids.size - 1)
-        showWidgetView()
+        removeWidgetAtIndex(focusIndex)
         return true
+    }
+
+    private fun removeWidgetAtIndex(index: Int) {
+        val ids = loadWidgetIds().toMutableList()
+        if (index < 0 || index >= ids.size) return
+        val removedId = ids.removeAt(index)
+        bridge.appWidgetHost.deleteAppWidgetId(removedId)
+        widgetViewCache.remove(removedId)
+        saveWidgetIds(ids)
+        focusIndex = if (ids.isEmpty()) -1 else index.coerceAtMost(ids.size - 1)
+        showWidgetView()
     }
 
     // ---- Widget view --------------------------------------------------------
@@ -162,7 +173,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
 
             ids.forEachIndexed { i, appWidgetId ->
                 val info = manager.getAppWidgetInfo(appWidgetId)
-                val wrapper = buildWidgetSlot(appWidgetId, info, isFocused = i == focusIndex)
+                val wrapper = buildWidgetSlot(i, appWidgetId, info, isFocused = i == focusIndex)
                 slotWrappers.add(wrapper)
                 inner.addView(wrapper)
             }
@@ -183,6 +194,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     }
 
     private fun buildWidgetSlot(
+        index: Int,
         appWidgetId: Int,
         info: AppWidgetProviderInfo?,
         isFocused: Boolean
@@ -197,12 +209,42 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             setPadding(2.dp(), 2.dp(), 2.dp(), 2.dp())
         }
 
+        // Remove button row (always visible, top-right of each slot)
+        val headerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        headerRow.addView(TextView(ctx).apply {
+            text = "✕ Remove"
+            textSize = 11f
+            setTextColor(Theme.primary)
+            setPadding(6.dp(), 2.dp(), 4.dp(), 2.dp())
+            isClickable = true
+            setOnClickListener { removeWidgetAtIndex(index) }
+        })
+        wrapper.addView(headerRow)
+
         if (info != null) {
-            val hostView = bridge.appWidgetHost.createView(ctx, appWidgetId, info)
-            val heightPx = resolveWidgetHeight(info)
+            val hostView = widgetViewCache.getOrPut(appWidgetId) {
+                val newView = bridge.appWidgetHost.createView(ctx, appWidgetId, info)
+                // Force the provider to resend its current RemoteViews to the newly
+                // registered view — the Android framework does not replay cached state.
+                val updateIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
+                    component = ComponentName(info.provider.packageName, info.provider.className)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(appWidgetId))
+                }
+                ctx.sendBroadcast(updateIntent)
+                newView
+            }
+            // Detach from previous parent wrapper before adding to the new one
+            (hostView.parent as? ViewGroup)?.removeView(hostView)
             hostView.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                heightPx
+                resolveWidgetHeight(info)
             )
             wrapper.addView(hostView)
         } else {
