@@ -3,8 +3,11 @@ package com.androbuttons.panes.widgets
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Color
+import android.os.Build
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
@@ -33,6 +36,14 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     private var scrollView: ScrollView? = null
     private var inConfigureView = false
 
+    // SharedPreferences listener: fires on the main thread as soon as WidgetPickerActivity
+    // writes the new widget ID, so the pane refreshes without waiting for navigation.
+    private val prefs: SharedPreferences =
+        bridge.context.getSharedPreferences("androbuttons_prefs", Context.MODE_PRIVATE)
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "${paneId}_appwidget_ids" && !inConfigureView) showWidgetView()
+    }
+
     // Tracks which widget slot (by index into the stored ID list) has focus.
     // -1 = no widget focused yet (first focus will go to index 0 on first onDown/onUp)
     private var focusIndex = -1
@@ -52,6 +63,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             isClickable = true
         }
         paneRoot = pane
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
         showWidgetView()
         return pane
     }
@@ -63,7 +75,9 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     }
 
     override fun onPaused() { /* AppWidgetHost lifecycle is handled by OverlayService */ }
-    override fun onDestroy() { /* same */ }
+    override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+    }
 
     // ---- Key navigation -----------------------------------------------------
 
@@ -204,10 +218,16 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         return wrapper
     }
 
-    /** Converts widget's declared minHeight (dp) to pixels, with a sensible minimum. */
+    /** Converts widget's declared size to pixels, with a sensible minimum. */
     private fun resolveWidgetHeight(info: AppWidgetProviderInfo): Int {
-        val minHeightDp = if (info.minResizeHeight > 0) info.minResizeHeight else info.minHeight
-        return if (minHeightDp > 0) minHeightDp.dp().coerceAtLeast(40.dp()) else 80.dp()
+        val minHeightDp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && info.targetCellHeight > 0) {
+            info.targetCellHeight * 72  // ~72 dp per standard home-screen cell (API 31+)
+        } else if (info.minResizeHeight > 0) {
+            info.minResizeHeight
+        } else {
+            info.minHeight
+        }
+        return if (minHeightDp > 0) minHeightDp.dp().coerceAtLeast(100.dp()) else 120.dp()
     }
 
     private fun focusBorder(focused: Boolean) = GradientDrawable().apply {

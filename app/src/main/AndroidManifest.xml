@@ -20,6 +20,10 @@
         <intent>
             <action android:name="android.media.browse.MediaBrowserService" />
         </intent>
+        <!-- Allow resolving widget configure activities (Android 11+ package visibility) -->
+        <intent>
+            <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+        </intent>
         <package android:name="com.voicenotes.main" />
         <package android:name="otp.systems.ridelink" />
         <package android:name="com.cardo.smartset" />
