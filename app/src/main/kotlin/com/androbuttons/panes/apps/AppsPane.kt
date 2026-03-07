@@ -105,7 +105,12 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     override fun onEnter(): Boolean {
-        appButtonViews.getOrNull(appListIndex)?.performClick()
+        val entry = appEntries.getOrNull(appListIndex) ?: return true
+        if (!sortingMode && entry.isInstalled) {
+            val intent = ctx.packageManager.getLaunchIntentForPackage(entry.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (intent != null) { ctx.startActivity(intent); bridge.hideOverlay() }
+        }
         return true
     }
 
