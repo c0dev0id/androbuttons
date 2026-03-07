@@ -1,4 +1,4 @@
-package com.androbuttons
+package com.androbuttons.panes.system
 
 import android.content.Context
 import android.graphics.Canvas

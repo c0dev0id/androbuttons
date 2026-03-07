@@ -21,12 +21,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
-import com.androbuttons.AltimeterView
-import com.androbuttons.CompassView
-import com.androbuttons.ForceDisplayView
-import com.androbuttons.GpsInfoView
-import com.androbuttons.LeanAngleView
-import com.androbuttons.SpeedometerView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.dpWith
