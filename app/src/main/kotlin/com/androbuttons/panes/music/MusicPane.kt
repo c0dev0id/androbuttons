@@ -567,7 +567,7 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 6.dp().toFloat()
             setColor(if (isPlaying) Theme.playingRow else Color.TRANSPARENT)
-            if (isFocused || isPlaying) setStroke(2.dp(), Theme.primary)
+            if (isFocused) setStroke(2.dp(), Theme.primary)
         }
     }
 
@@ -589,7 +589,7 @@ class MusicPane(private val bridge: ServiceBridge) : PaneContent {
 
     private fun refreshMusicFocus() {
         refreshPlayButton()
-        val listFocused = musicFocus == MusicFocus.LIST || musicFocus == MusicFocus.LIST_ENTRY
+        val listFocused = musicFocus == MusicFocus.LIST
         playlistContainerView?.background = if (listFocused) {
             GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE; cornerRadius = 8.dp().toFloat()
