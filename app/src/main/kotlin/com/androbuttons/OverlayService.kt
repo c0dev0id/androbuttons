@@ -449,10 +449,20 @@ class OverlayService : Service(), ServiceBridge {
     }
 
     private fun applyNewPaneOrder(newOrder: List<String>) {
+        // Remember which pane the user was on before rebuilding
+        val oldEnabledIds = (prefs.getString(KEY_PANE_ORDER, DEFAULT_PANE_ORDER) ?: DEFAULT_PANE_ORDER)
+            .split(",")
+            .filter { it.isNotBlank() && !it.startsWith("~") }
+        val currentPaneId = oldEnabledIds.getOrNull(currentPane)
+
         prefs.edit().putString(KEY_PANE_ORDER, newOrder.joinToString(",")).apply()
         panes.forEach { it.onDestroy() }
         panes = buildPanes()
-        currentPane = 0
+
+        // Restore position; fall back to 0 if the pane was disabled or removed
+        val newEnabledIds = newOrder.filter { it.isNotBlank() && !it.startsWith("~") }
+        currentPane = newEnabledIds.indexOf(currentPaneId).takeIf { it >= 0 } ?: 0
+
         inPaneManager = false
         showOverlay()
     }
