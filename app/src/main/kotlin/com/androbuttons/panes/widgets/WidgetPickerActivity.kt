@@ -46,6 +46,7 @@ class WidgetPickerActivity : AppCompatActivity() {
 
         paneId = intent.getStringExtra(EXTRA_PANE_ID) ?: run { finish(); return }
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        pendingAppWidgetId = savedInstanceState?.getInt("pendingAppWidgetId", -1) ?: -1
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -229,6 +230,11 @@ class WidgetPickerActivity : AppCompatActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("pendingAppWidgetId", pendingAppWidgetId)
+    }
+
     private fun onBound(info: AppWidgetProviderInfo) {
         val configComponent = info.configure
         if (configComponent != null) {
@@ -237,8 +243,13 @@ class WidgetPickerActivity : AppCompatActivity() {
                 component = configComponent
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingAppWidgetId)
             }
-            @Suppress("DEPRECATION")
-            startActivityForResult(intent, REQUEST_CONFIGURE)
+            try {
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, REQUEST_CONFIGURE)
+            } catch (_: Exception) {
+                // Configure activity unavailable or not exported — save without configuration.
+                saveAndFinish()
+            }
         } else {
             saveAndFinish()
         }
