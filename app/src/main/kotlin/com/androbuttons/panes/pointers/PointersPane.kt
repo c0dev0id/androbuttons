@@ -56,6 +56,10 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
     private var inConfigureView = false
     private var coordinator: PointerCoordinator? = null
 
+    // Preserved configure-view widgets so search can navigate back without data loss
+    private var configureScrollView: ScrollView? = null
+    private var configureSaveBtn: View? = null
+
     // ---- PaneContent --------------------------------------------------------
 
     override fun buildView(): View {
@@ -211,6 +215,16 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             val row = Row(nameField, coordField)
             rows.add(row)
 
+            val searchBtn = TextView(ctx).apply {
+                text = "🔍"
+                textSize = 16f
+                setTextColor(Theme.textSecondary)
+                gravity = Gravity.CENTER
+                setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+                isClickable = true
+                setOnClickListener { showSearchView(nameField, coordField) }
+            }
+
             val removeBtn = TextView(ctx).apply {
                 text = "✕"
                 textSize = 16f
@@ -235,6 +249,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 background = buttonBg(false, ctx)
                 addView(nameField)
                 addView(coordField)
+                addView(searchBtn)
                 addView(removeBtn)
             })
         }
@@ -258,12 +273,14 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         }
         rowContainer.addView(addBtn)
 
-        pane.addView(ScrollView(ctx).apply {
+        val sv = ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             addView(rowContainer)
-        })
+        }
+        configureScrollView = sv
+        pane.addView(sv)
 
-        pane.addView(TextView(ctx).apply {
+        val saveBtn = TextView(ctx).apply {
             text = "Save"
             textSize = 16f
             setTypeface(null, Typeface.BOLD)
@@ -285,7 +302,164 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 showPointersView()
                 startCoordinator()
             }
+        }
+        configureSaveBtn = saveBtn
+        pane.addView(saveBtn)
+    }
+
+    // ---- Search view --------------------------------------------------------
+
+    private fun showSearchView(nameField: EditText, coordField: EditText) {
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+
+        val queryField = EditText(ctx).apply {
+            hint = "Search for place or address"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Theme.textSecondary)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            background = buttonBg(false, ctx)
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+        }
+
+        val resultsContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        val searchBtn = TextView(ctx).apply {
+            text = "Search"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = actionButtonBg(Theme.primary, ctx)
+            setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            isClickable = true
+            setOnClickListener {
+                val q = queryField.text.toString().trim()
+                if (q.isNotEmpty()) searchNominatim(q, resultsContainer, nameField, coordField)
+            }
+        }
+
+        val backBtn = TextView(ctx).apply {
+            text = "← Back"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Theme.textSecondary)
+            background = actionButtonBg(Theme.inactiveBg, ctx)
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            isClickable = true
+            setOnClickListener { restoreConfigureView() }
+        }
+
+        pane.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(queryField)
+            addView(searchBtn)
         })
+        pane.addView(ScrollView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(resultsContainer)
+        })
+        pane.addView(backBtn)
+    }
+
+    private fun restoreConfigureView() {
+        val pane = paneRoot ?: return
+        val sv = configureScrollView ?: return
+        val sb = configureSaveBtn ?: return
+        pane.removeAllViews()
+        pane.addView(sv)
+        pane.addView(sb)
+    }
+
+    private fun searchNominatim(
+        query: String,
+        resultsContainer: LinearLayout,
+        nameField: EditText,
+        coordField: EditText
+    ) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        resultsContainer.removeAllViews()
+        resultsContainer.addView(TextView(ctx).apply {
+            text = "Searching…"
+            setTextColor(Theme.textSecondary)
+            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+        })
+
+        Thread {
+            try {
+                val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+                val conn = java.net.URL(
+                    "https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=5"
+                ).openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("User-Agent", "Androbuttons/1.0")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                val json = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+
+                val results = org.json.JSONArray(json)
+                handler.post {
+                    resultsContainer.removeAllViews()
+                    if (results.length() == 0) {
+                        resultsContainer.addView(TextView(ctx).apply {
+                            text = "No results found"
+                            setTextColor(Theme.textSecondary)
+                            setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+                        })
+                    } else {
+                        for (i in 0 until results.length()) {
+                            val item = results.getJSONObject(i)
+                            val displayName = item.getString("display_name")
+                            val lat = item.getString("lat").toDouble()
+                            val lon = item.getString("lon").toDouble()
+                            val shortName = displayName.substringBefore(",").trim()
+
+                            resultsContainer.addView(TextView(ctx).apply {
+                                text = displayName
+                                textSize = 12f
+                                setTextColor(Color.WHITE)
+                                setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+                                background = buttonBg(false, ctx)
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply { bottomMargin = 4.dp() }
+                                isClickable = true
+                                setOnClickListener {
+                                    nameField.setText(shortName)
+                                    coordField.setText("%.6f,%.6f".format(lon, lat))
+                                    restoreConfigureView()
+                                }
+                            })
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                handler.post {
+                    resultsContainer.removeAllViews()
+                    resultsContainer.addView(TextView(ctx).apply {
+                        text = "Search failed: check connection"
+                        setTextColor(Color.parseColor("#F57C00"))
+                        setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+                    })
+                }
+            }
+        }.start()
     }
 
     // ---- Coordinator lifecycle -----------------------------------------------
