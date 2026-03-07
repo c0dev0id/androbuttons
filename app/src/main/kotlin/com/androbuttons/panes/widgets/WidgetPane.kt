@@ -1,64 +1,44 @@
 package com.androbuttons.panes.widgets
 
-import android.content.Context
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.TrafficStats
-import android.net.wifi.WifiManager
-import android.os.Build
-import android.os.Environment
-import android.os.Handler
-import android.os.Looper
-import android.os.StatFs
-import android.telephony.TelephonyManager
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Space
 import android.widget.TextView
-import com.androbuttons.CpuCoresView
-import com.androbuttons.DiskIoView
-import com.androbuttons.DiskSpaceView
-import com.androbuttons.MemoryBarView
-import com.androbuttons.NetworkIoView
-import com.androbuttons.SignalView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
 import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.dpWith
-import java.io.BufferedReader
-import java.io.FileReader
 
 class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) : PaneContent {
 
     override val title: String
         get() = bridge.getStringPref("${paneId}_title", "Widgets") ?: "Widgets"
 
-    enum class Widget(val id: String, val label: String) {
-        CPU("cpu", "CPU"),
-        MEMORY("memory", "MEMORY"),
-        DISK_SPACE("disk_space", "DISK SPACE"),
-        DISK_IO("disk_io", "DISK I/O"),
-        NETWORK("network", "NETWORK I/O"),
-        SIGNAL("signal", "SIGNAL")
-    }
-
-    private val ctx: Context get() = bridge.context
+    private val ctx get() = bridge.context
     private fun Int.dp() = dpWith(ctx)
 
     private var paneRoot: LinearLayout? = null
-    private var cpuView: CpuCoresView? = null
-    private var memoryBarView: MemoryBarView? = null
-    private var diskSpaceView: DiskSpaceView? = null
-    private var diskIoView: DiskIoView? = null
-    private var networkIoView: NetworkIoView? = null
-    private var signalView: SignalView? = null
-    private var monitor: WidgetMonitor? = null
+    private var scrollView: ScrollView? = null
     private var inConfigureView = false
+
+    // Tracks which widget slot (by index into the stored ID list) has focus.
+    // -1 = no widget focused yet (first focus will go to index 0 on first onDown/onUp)
+    private var focusIndex = -1
+
+    // Parallel list: one wrapper view per hosted widget, in display order.
+    private val slotWrappers = mutableListOf<LinearLayout>()
 
     // ---- PaneContent --------------------------------------------------------
 
@@ -77,15 +57,65 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     }
 
     override fun onResumed() {
-        if (!inConfigureView) startMonitor()
+        // Rebuild the widget view in case the user just added a widget via
+        // WidgetPickerActivity while this pane was in the background.
+        if (!inConfigureView) showWidgetView()
     }
 
-    override fun onPaused() {
-        stopMonitor()
+    override fun onPaused() { /* AppWidgetHost lifecycle is handled by OverlayService */ }
+    override fun onDestroy() { /* same */ }
+
+    // ---- Key navigation -----------------------------------------------------
+
+    override fun onUp(): Boolean {
+        if (inConfigureView) return false
+        val ids = loadWidgetIds()
+        if (ids.isEmpty()) return false
+        focusIndex = if (focusIndex <= 0) ids.size - 1 else focusIndex - 1
+        updateFocusHighlight(ids.size)
+        scrollToFocused()
+        return true
     }
 
-    override fun onDestroy() {
-        stopMonitor()
+    override fun onDown(): Boolean {
+        if (inConfigureView) return false
+        val ids = loadWidgetIds()
+        if (ids.isEmpty()) return false
+        focusIndex = if (focusIndex < 0 || focusIndex >= ids.size - 1) 0 else focusIndex + 1
+        updateFocusHighlight(ids.size)
+        scrollToFocused()
+        return true
+    }
+
+    override fun onEnter(): Boolean {
+        if (inConfigureView) return false
+        val wrappers = slotWrappers
+        if (focusIndex < 0 || focusIndex >= wrappers.size) return false
+        val slot = wrappers[focusIndex]
+        // Find the AppWidgetHostView child of the slot wrapper
+        val widgetView = (0 until slot.childCount).map { slot.getChildAt(it) }
+            .firstOrNull { it is AppWidgetHostView } ?: return false
+        // Dispatch synthetic tap at the centre of the widget view
+        val cx = widgetView.width / 2f
+        val cy = widgetView.height / 2f
+        val now = SystemClock.uptimeMillis()
+        widgetView.dispatchTouchEvent(MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cx, cy, 0))
+        widgetView.dispatchTouchEvent(MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, cx, cy, 0))
+        return true
+    }
+
+    override fun onCancel(): Boolean {
+        if (inConfigureView) return false
+        if (focusIndex < 0 || focusIndex >= slotWrappers.size) return false
+        // Remove the focused widget
+        val ids = loadWidgetIds().toMutableList()
+        if (focusIndex >= ids.size) return false
+        val removedId = ids.removeAt(focusIndex)
+        bridge.appWidgetHost.deleteAppWidgetId(removedId)
+        saveWidgetIds(ids)
+        focusIndex = if (ids.isEmpty()) -1 else focusIndex.coerceAtMost(ids.size - 1)
+        showWidgetView()
+        return true
     }
 
     // ---- Widget view --------------------------------------------------------
@@ -94,70 +124,122 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         inConfigureView = false
         val pane = paneRoot ?: return
         pane.removeAllViews()
+        slotWrappers.clear()
 
-        // Reset all view references so the monitor knows which are active
-        cpuView = null; memoryBarView = null; diskSpaceView = null
-        diskIoView = null; networkIoView = null; signalView = null
-
-        val selectedWidgets = loadSelectedWidgets()
+        val ids = loadWidgetIds()
+        val manager = AppWidgetManager.getInstance(ctx)
 
         val inner = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
         }
 
-        if (selectedWidgets.isEmpty()) {
+        if (ids.isEmpty()) {
             inner.addView(TextView(ctx).apply {
-                text = "No widgets selected.\nTap Configure to add widgets."
+                text = "No widgets added.\nTap ➕ to add an Android widget."
                 textSize = 13f
                 setTextColor(Theme.textSecondary)
                 gravity = Gravity.CENTER
                 setPadding(16.dp(), 40.dp(), 16.dp(), 40.dp())
             })
         } else {
-            selectedWidgets.forEach { widget ->
-                inner.addView(sectionHeader(widget.label))
-                val v: View = when (widget) {
-                    Widget.CPU        -> CpuCoresView(ctx).also { cpuView = it }
-                    Widget.MEMORY     -> MemoryBarView(ctx).also { memoryBarView = it }
-                    Widget.DISK_SPACE -> DiskSpaceView(ctx).also { diskSpaceView = it }
-                    Widget.DISK_IO    -> DiskIoView(ctx).also { diskIoView = it }
-                    Widget.NETWORK    -> NetworkIoView(ctx).also { networkIoView = it }
-                    Widget.SIGNAL     -> SignalView(ctx).also { signalView = it }
-                }
-                inner.addView(v.apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                })
-                inner.addView(spacer())
+            // Clamp focusIndex in case widgets were removed externally
+            if (focusIndex >= ids.size) focusIndex = ids.size - 1
+
+            ids.forEachIndexed { i, appWidgetId ->
+                val info = manager.getAppWidgetInfo(appWidgetId)
+                val wrapper = buildWidgetSlot(appWidgetId, info, isFocused = i == focusIndex)
+                slotWrappers.add(wrapper)
+                inner.addView(wrapper)
             }
         }
 
-        pane.addView(ScrollView(ctx).apply {
+        val scrollView = ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             isClickable = true
             setOnTouchListener(bridge.makePaneSwipeListener())
             addView(inner)
-        })
-        pane.addView(configureButton())
+        }
 
-        startMonitor()
+        this.scrollView = scrollView
+        pane.addView(scrollView)
+        pane.addView(addWidgetButton())
+        pane.addView(configureButton())
     }
 
-    // ---- Configure view -----------------------------------------------------
+    private fun buildWidgetSlot(
+        appWidgetId: Int,
+        info: AppWidgetProviderInfo?,
+        isFocused: Boolean
+    ): LinearLayout {
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+            background = focusBorder(isFocused)
+            setPadding(2.dp(), 2.dp(), 2.dp(), 2.dp())
+        }
+
+        if (info != null) {
+            val hostView = bridge.appWidgetHost.createView(ctx, appWidgetId, info)
+            val heightPx = resolveWidgetHeight(info)
+            hostView.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                heightPx
+            )
+            wrapper.addView(hostView)
+        } else {
+            // Widget info unavailable (app uninstalled, etc.)
+            wrapper.addView(TextView(ctx).apply {
+                text = "Widget unavailable (app may be uninstalled)"
+                textSize = 12f
+                setTextColor(Theme.textSecondary)
+                gravity = Gravity.CENTER
+                setPadding(8.dp(), 20.dp(), 8.dp(), 20.dp())
+            })
+        }
+        return wrapper
+    }
+
+    /** Converts widget's declared minHeight (dp) to pixels, with a sensible minimum. */
+    private fun resolveWidgetHeight(info: AppWidgetProviderInfo): Int {
+        val minHeightDp = if (info.minResizeHeight > 0) info.minResizeHeight else info.minHeight
+        return if (minHeightDp > 0) minHeightDp.dp().coerceAtLeast(40.dp()) else 80.dp()
+    }
+
+    private fun focusBorder(focused: Boolean) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 6.dp().toFloat()
+        if (focused) {
+            setColor(Color.TRANSPARENT)
+            setStroke(2.dp(), Theme.primary)
+        } else {
+            setColor(Color.TRANSPARENT)
+        }
+    }
+
+    private fun updateFocusHighlight(count: Int) {
+        for (i in 0 until count) {
+            slotWrappers.getOrNull(i)?.background = focusBorder(i == focusIndex)
+        }
+    }
+
+    private fun scrollToFocused() {
+        val wrapper = slotWrappers.getOrNull(focusIndex) ?: return
+        val sv = scrollView ?: return
+        sv.post { sv.smoothScrollTo(0, wrapper.top) }
+    }
+
+    // ---- Configure view (title only) ----------------------------------------
 
     private fun showConfigureView() {
         inConfigureView = true
-        stopMonitor()
         val pane = paneRoot ?: return
         pane.removeAllViews()
-
-        val selectedIds = loadSelectedWidgets().map { it.id }.toSet()
-        val checkedState = mutableMapOf<String, Boolean>()
-        Widget.entries.forEach { checkedState[it.id] = it.id in selectedIds }
+        slotWrappers.clear()
 
         val titleEdit = EditText(ctx).apply {
             setText(bridge.getStringPref("${paneId}_title", "Widgets"))
@@ -175,80 +257,52 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = 10.dp()
-                leftMargin = 10.dp()
-                rightMargin = 10.dp()
-                bottomMargin = 6.dp()
+                topMargin = 10.dp(); leftMargin = 10.dp()
+                rightMargin = 10.dp(); bottomMargin = 6.dp()
             }
             setTypeface(null, Typeface.BOLD)
         }
 
-        val rowContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        Widget.entries.forEach { widget ->
-            val checkbox = makeCheckbox(checkedState[widget.id] == true)
-            rowContainer.addView(LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = 2.dp() }
-                addView(checkbox)
-                addView(TextView(ctx).apply {
-                    text = widget.label; textSize = 14f; setTextColor(Color.WHITE)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                setOnClickListener {
-                    val nowChecked = !(checkedState[widget.id] ?: false)
-                    checkedState[widget.id] = nowChecked
-                    updateCheckbox(checkbox, nowChecked)
-                }
-            })
-        }
-
         pane.addView(titleEdit)
-        pane.addView(ScrollView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            addView(rowContainer)
-        })
         pane.addView(saveButton {
             val newTitle = titleEdit.text.toString().trim().ifBlank { "Widgets" }
             bridge.putStringPref("${paneId}_title", newTitle)
-            saveSelectedWidgets(Widget.entries.filter { checkedState[it.id] == true })
             showWidgetView()
         })
     }
 
     // ---- UI helpers ---------------------------------------------------------
 
-    private fun sectionHeader(text: String) = TextView(ctx).apply {
-        this.text = text
-        textSize = 9f
-        setTextColor(Theme.primary)
-        setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
-        letterSpacing = 0.2f
+    private fun addWidgetButton() = TextView(ctx).apply {
+        text = "➕  Add Widget"
+        textSize = 15f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+        setTextColor(Color.WHITE)
+        background = actionButtonBg(Theme.primary, ctx)
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = 4.dp() }
-    }
-
-    private fun spacer() = Space(ctx).apply {
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 8.dp())
+        ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 8.dp(); bottomMargin = 4.dp() }
+        setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
+        isClickable = true
+        setOnClickListener {
+            val intent = Intent(ctx, WidgetPickerActivity::class.java).apply {
+                putExtra(WidgetPickerActivity.EXTRA_PANE_ID, paneId)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(intent)
+        }
     }
 
     private fun configureButton() = TextView(ctx).apply {
-        text = "Configure"
-        textSize = 16f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+        text = "Rename Pane"
+        textSize = 14f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
         setTextColor(Theme.textSecondary)
         background = actionButtonBg(Theme.inactiveBg, ctx)
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = 8.dp(); leftMargin = 10.dp(); rightMargin = 10.dp(); bottomMargin = 10.dp() }
-        setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+        ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 0.dp(); bottomMargin = 10.dp() }
+        setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
         isClickable = true
         setOnClickListener { showConfigureView() }
     }
@@ -267,236 +321,15 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         setOnClickListener { onSave() }
     }
 
-    private fun makeCheckbox(checked: Boolean) = TextView(ctx).apply {
-        val size = 24.dp()
-        layoutParams = LinearLayout.LayoutParams(size, size).apply { rightMargin = 12.dp() }
-        gravity = Gravity.CENTER
-        text = if (checked) "✓" else ""
-        textSize = 14f
-        setTextColor(Color.WHITE)
-        setTypeface(null, Typeface.BOLD)
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 4.dp().toFloat()
-            if (checked) setColor(Theme.primary)
-            else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
-        }
-    }
-
-    private fun updateCheckbox(cb: TextView, checked: Boolean) {
-        cb.text = if (checked) "✓" else ""
-        cb.background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 4.dp().toFloat()
-            if (checked) setColor(Theme.primary)
-            else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
-        }
-    }
-
-    // ---- Monitor ------------------------------------------------------------
-
-    private fun startMonitor() {
-        if (monitor == null) monitor = WidgetMonitor().also { it.start() }
-    }
-
-    private fun stopMonitor() {
-        monitor?.stop()
-        monitor = null
-        diskIoView?.maxSeen = 1f
-        networkIoView?.maxSeen = 1f
-    }
-
-    private inner class WidgetMonitor {
-
-        private val handler = Handler(Looper.getMainLooper())
-
-        // CPU
-        private var prevCpuStats: Array<LongArray>? = null
-
-        // Disk I/O
-        private var prevDiskRead = 0L
-        private var prevDiskWrite = 0L
-        private var prevDiskTimeMs = 0L
-        private var diskDevice: String? = null
-
-        // Network I/O
-        private var prevNetRxBytes = 0L
-        private var prevNetTxBytes = 0L
-        private var prevNetTimeMs = 0L
-
-        private val poller = object : Runnable {
-            override fun run() {
-                Thread {
-                    val cpuResult     = readCpuUsages()
-                    val memResult     = readMemInfo()
-                    val diskSpResult  = readDiskSpace()
-                    val diskIoResult  = readDiskIO()
-                    val netResult     = readNetworkIO()
-                    val signalResult  = readSignalStrengths()
-
-                    handler.post {
-                        cpuResult?.let { cpuView?.update(it); cpuView?.requestLayout() }
-                        memResult?.let { (u, c, t) -> memoryBarView?.update(u, c, t) }
-                        diskSpResult?.let { (u, t) -> diskSpaceView?.update(u, t) }
-                        diskIoResult?.let { (r, w) -> diskIoView?.update(r, w) }
-                        netResult?.let { (rx, tx) -> networkIoView?.update(rx, tx) }
-                        signalResult?.let { (wifi, mobile) -> signalView?.update(wifi, mobile) }
-                    }
-                }.start()
-                handler.postDelayed(this, 1000L)
-            }
-        }
-
-        fun start() { handler.post(poller) }
-        fun stop()  { handler.removeCallbacks(poller) }
-
-        private fun readCpuUsages(): FloatArray? {
-            return try {
-                val lines = BufferedReader(FileReader("/proc/stat")).use { it.readLines() }
-                val coreLines = lines.filter { it.matches(Regex("cpu\\d+.*")) }
-                if (coreLines.isEmpty()) return null
-                val currentStats = Array(coreLines.size) { i ->
-                    val parts = coreLines[i].trim().split(Regex("\\s+")).drop(1).map { it.toLongOrNull() ?: 0L }
-                    LongArray(8) { j -> parts.getOrElse(j) { 0L } }
-                }
-                val prev = prevCpuStats
-                prevCpuStats = currentStats
-                if (prev == null || prev.size != currentStats.size) return null
-                FloatArray(currentStats.size) { i ->
-                    val cur = currentStats[i]; val prv = prev[i]
-                    val dTotal = cur.sum() - prv.sum()
-                    val dIdle  = (cur[3] + cur[4]) - (prv[3] + prv[4])
-                    if (dTotal <= 0L) 0f else (1f - dIdle.toFloat() / dTotal).coerceIn(0f, 1f)
-                }
-            } catch (_: Exception) { null }
-        }
-
-        private fun readMemInfo(): Triple<Long, Long, Long>? {
-            return try {
-                val map = mutableMapOf<String, Long>()
-                BufferedReader(FileReader("/proc/meminfo")).use { reader ->
-                    reader.lineSequence().forEach { line ->
-                        val parts = line.split(Regex("\\s+"))
-                        if (parts.size >= 2) map[parts[0].trimEnd(':')] = parts[1].toLongOrNull() ?: 0L
-                    }
-                }
-                val total        = (map["MemTotal"]     ?: return null) / 1024L
-                val free         = (map["MemFree"]      ?: 0L) / 1024L
-                val buffers      = (map["Buffers"]      ?: 0L) / 1024L
-                val cached       = (map["Cached"]       ?: 0L) / 1024L
-                val sReclaimable = (map["SReclaimable"] ?: 0L) / 1024L
-                val shmem        = (map["Shmem"]        ?: 0L) / 1024L
-                val cachedTotal  = buffers + cached + sReclaimable - shmem
-                val used         = total - free - buffers - (cached + sReclaimable - shmem)
-                Triple(used.coerceAtLeast(0L), cachedTotal.coerceAtLeast(0L), total)
-            } catch (_: Exception) { null }
-        }
-
-        private fun readDiskSpace(): Pair<Long, Long>? {
-            return try {
-                val stat  = StatFs(Environment.getDataDirectory().path)
-                val total = stat.blockCountLong * stat.blockSizeLong
-                val free  = stat.availableBlocksLong * stat.blockSizeLong
-                Pair((total - free).coerceAtLeast(0L), total)
-            } catch (_: Exception) { null }
-        }
-
-        private fun readDiskIO(): Pair<Float, Float>? {
-            return try {
-                val lines  = BufferedReader(FileReader("/proc/diskstats")).use { it.readLines() }
-                val parsed = lines.map { it.trim().split(Regex("\\s+")) }
-
-                if (diskDevice == null) {
-                    fun ioScore(parts: List<String>) =
-                        (parts.getOrNull(5)?.toLongOrNull() ?: 0L) +
-                        (parts.getOrNull(9)?.toLongOrNull() ?: 0L)
-                    val candidates = parsed.filter { parts ->
-                        parts.size >= 14 &&
-                        (parts[2].matches(Regex("sd[a-z]"))       ||
-                         parts[2].matches(Regex("mmcblk\\d+"))    ||
-                         parts[2].matches(Regex("nvme\\d+n\\d+")) ||
-                         parts[2].matches(Regex("vd[a-z]"))       ||
-                         parts[2].matches(Regex("dm-\\d+")))
-                    }
-                    diskDevice = candidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
-                    if (diskDevice == null) {
-                        val partCandidates = parsed.filter { parts ->
-                            parts.size >= 14 &&
-                            (parts[2].matches(Regex("sd[a-z]\\d+"))        ||
-                             parts[2].matches(Regex("mmcblk\\d+p\\d+"))    ||
-                             parts[2].matches(Regex("nvme\\d+n\\d+p\\d+")) ||
-                             parts[2].matches(Regex("vd[a-z]\\d+")))
-                        }
-                        diskDevice = partCandidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
-                    }
-                }
-
-                val device = diskDevice ?: return null
-                val parts  = parsed.firstOrNull { it.getOrNull(2) == device } ?: return null
-                val sectorsRead  = parts.getOrNull(5)?.toLongOrNull() ?: return null
-                val sectorsWrite = parts.getOrNull(9)?.toLongOrNull() ?: return null
-                val nowMs = System.currentTimeMillis()
-
-                val prevRead = prevDiskRead; val prevWrite = prevDiskWrite; val prevTime = prevDiskTimeMs
-                prevDiskRead = sectorsRead; prevDiskWrite = sectorsWrite; prevDiskTimeMs = nowMs
-                if (prevTime == 0L) return Pair(0f, 0f)
-                val elapsedSec = (nowMs - prevTime) / 1000f
-                if (elapsedSec <= 0f) return Pair(0f, 0f)
-                Pair(
-                    ((sectorsRead  - prevRead)  * 512L / 1_000_000f / elapsedSec).coerceAtLeast(0f),
-                    ((sectorsWrite - prevWrite) * 512L / 1_000_000f / elapsedSec).coerceAtLeast(0f)
-                )
-            } catch (_: Exception) { null }
-        }
-
-        private fun readNetworkIO(): Pair<Float, Float>? {
-            return try {
-                val totalRx = TrafficStats.getTotalRxBytes()
-                val totalTx = TrafficStats.getTotalTxBytes()
-                if (totalRx < 0 || totalTx < 0) return null
-                val nowMs = System.currentTimeMillis()
-                val prevRx = prevNetRxBytes; val prevTx = prevNetTxBytes; val prevTime = prevNetTimeMs
-                prevNetRxBytes = totalRx; prevNetTxBytes = totalTx; prevNetTimeMs = nowMs
-                if (prevTime == 0L) return Pair(0f, 0f)
-                val elapsedSec = (nowMs - prevTime) / 1000f
-                if (elapsedSec <= 0f) return Pair(0f, 0f)
-                Pair(
-                    ((totalRx - prevRx).coerceAtLeast(0L) / 1024f / elapsedSec),
-                    ((totalTx - prevTx).coerceAtLeast(0L) / 1024f / elapsedSec)
-                )
-            } catch (_: Exception) { null }
-        }
-
-        private fun readSignalStrengths(): Pair<Int?, Int?> {
-            val wifiRssi: Int? = try {
-                @Suppress("DEPRECATION")
-                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-                @Suppress("DEPRECATION")
-                val rssi = wm?.connectionInfo?.rssi
-                if (rssi == null || rssi == Int.MIN_VALUE || rssi <= -127) null else rssi
-            } catch (_: Exception) { null }
-
-            val mobileDbm: Int? = try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-                    tm?.signalStrength?.cellSignalStrengths?.firstOrNull()?.dbm
-                        ?.takeIf { it > Int.MIN_VALUE && it > -200 }
-                } else null
-            } catch (_: SecurityException) { null } catch (_: Exception) { null }
-
-            return Pair(wifiRssi, mobileDbm)
-        }
-    }
-
     // ---- Prefs helpers ------------------------------------------------------
 
-    private fun loadSelectedWidgets(): List<Widget> {
-        val raw = bridge.getStringPref("${paneId}_widgets", null)
-        if (raw == null || raw.isBlank()) return Widget.entries.toList()
-        return raw.split(",").mapNotNull { id -> Widget.entries.find { it.id == id } }
+    private fun loadWidgetIds(): List<Int> {
+        val raw = bridge.getStringPref("${paneId}_appwidget_ids", null)
+        if (raw.isNullOrBlank()) return emptyList()
+        return raw.split(",").mapNotNull { it.trim().toIntOrNull() }
     }
 
-    private fun saveSelectedWidgets(widgets: List<Widget>) {
-        bridge.putStringPref("${paneId}_widgets", widgets.joinToString(",") { it.id })
+    private fun saveWidgetIds(ids: List<Int>) {
+        bridge.putStringPref("${paneId}_appwidget_ids", ids.joinToString(","))
     }
 }

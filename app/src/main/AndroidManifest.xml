@@ -57,6 +57,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".panes.widgets.WidgetPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Androbuttons"
+            android:excludeFromRecents="true" />
+
         <service
             android:name=".OverlayService"
             android:exported="false"

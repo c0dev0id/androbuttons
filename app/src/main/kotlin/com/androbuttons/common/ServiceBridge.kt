@@ -1,5 +1,6 @@
 package com.androbuttons.common
 
+import android.appwidget.AppWidgetHost
 import android.content.Context
 import android.view.View
 
@@ -13,6 +14,9 @@ interface ServiceBridge {
 
     /** The service Context — use for system services, inflating views, etc. */
     val context: Context
+
+    /** The app's shared [AppWidgetHost] — used to create and manage hosted Android widgets. */
+    val appWidgetHost: AppWidgetHost
 
     /** Animate the overlay off-screen and remove it from the window manager. */
     fun hideOverlay()
