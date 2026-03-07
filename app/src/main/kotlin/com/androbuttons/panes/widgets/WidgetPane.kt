@@ -420,7 +420,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     private fun loadWidgetIds(): List<Int> {
         val raw = bridge.getStringPref("${paneId}_appwidget_ids", null)
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.split(",").mapNotNull { it.trim().toIntOrNull() }
+        return raw.split(",").mapNotNull { it.trim().toIntOrNull() }.distinct()
     }
 
     private fun saveWidgetIds(ids: List<Int>) {
