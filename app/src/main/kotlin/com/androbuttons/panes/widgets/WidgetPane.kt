@@ -124,12 +124,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         return true
     }
 
-    override fun onCancel(): Boolean {
-        if (inConfigureView) return false
-        if (focusIndex < 0 || focusIndex >= slotWrappers.size) return false
-        removeWidgetAtIndex(focusIndex)
-        return true
-    }
+    override fun onCancel(): Boolean = false
 
     private fun removeWidgetAtIndex(index: Int) {
         val ids = loadWidgetIds().toMutableList()

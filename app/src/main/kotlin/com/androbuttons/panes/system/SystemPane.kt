@@ -23,13 +23,6 @@ import android.widget.Space
 import android.widget.TextView
 import android.content.Intent
 import android.content.IntentFilter
-import com.androbuttons.BatteryView
-import com.androbuttons.BluetoothDevicesView
-import com.androbuttons.LoadHistogramView
-import com.androbuttons.DiskSpaceView
-import com.androbuttons.MemoryBarView
-import com.androbuttons.NetworkIoView
-import com.androbuttons.SignalView
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.dpWith
