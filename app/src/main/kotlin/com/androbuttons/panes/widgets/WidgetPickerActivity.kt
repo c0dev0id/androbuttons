@@ -228,9 +228,12 @@ class WidgetPickerActivity : AppCompatActivity() {
                 }
             }
             REQUEST_CONFIGURE -> {
-                // Regardless of result code, the widget was added (configuration may
-                // or may not have been completed by the user — treat as done).
-                saveAndFinish()
+                if (resultCode == RESULT_OK) {
+                    saveAndFinish()
+                } else {
+                    // User cancelled or did not complete configuration — discard the widget.
+                    releaseAndFinish()
+                }
             }
         }
     }
@@ -257,8 +260,15 @@ class WidgetPickerActivity : AppCompatActivity() {
                     startActivityForResult(intent, REQUEST_CONFIGURE)
                     return
                 } catch (_: SecurityException) {
-                    // Activity declared but not exported; fall through to saveAndFinish.
+                    // Activity declared but not exported; cannot configure → don't add a broken widget.
+                    releaseAndFinish()
+                    return
                 }
+            } else {
+                // Configure component exists but isn't visible to us (Android 11+ package-visibility).
+                // Adding without configuration would leave a broken widget — discard instead.
+                releaseAndFinish()
+                return
             }
         }
         saveAndFinish()
