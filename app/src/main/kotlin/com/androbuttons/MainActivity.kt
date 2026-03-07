@@ -31,6 +31,12 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
     }
 
+    private val contactsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        checkAndRequestPermissions()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRequestPermissions()
@@ -59,6 +65,15 @@ class MainActivity : AppCompatActivity() {
         val coarseLocation = Manifest.permission.ACCESS_COARSE_LOCATION
         if (ContextCompat.checkSelfPermission(this, fineLocation) != PackageManager.PERMISSION_GRANTED) {
             locationPermissionLauncher.launch(arrayOf(fineLocation, coarseLocation))
+            return
+        }
+
+        // Stage 4: Contacts + Call Phone (needed for Phone pane)
+        val readContacts = Manifest.permission.READ_CONTACTS
+        val callPhone = Manifest.permission.CALL_PHONE
+        if (ContextCompat.checkSelfPermission(this, readContacts) != PackageManager.PERMISSION_GRANTED
+            || ContextCompat.checkSelfPermission(this, callPhone) != PackageManager.PERMISSION_GRANTED) {
+            contactsPermissionLauncher.launch(arrayOf(readContacts, callPhone))
             return
         }
 
