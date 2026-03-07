@@ -38,10 +38,9 @@ import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
 import com.androbuttons.panes.apps.AppsPane
+import com.androbuttons.panes.contact.ContactPane
 import com.androbuttons.panes.markers.MarkersPane
-import com.androbuttons.panes.message.MessagePane
 import com.androbuttons.panes.music.MusicPane
-import com.androbuttons.panes.phone.PhonePane
 import com.androbuttons.panes.pointers.PointersPane
 import com.androbuttons.panes.sensors.SensorsPane
 import com.androbuttons.panes.system.SystemPane
@@ -71,13 +70,12 @@ class OverlayService : Service(), ServiceBridge {
 
         private const val KEY_PANE_ORDER    = "pane_order"
         private const val KEY_WIDGET_NEXTID = "widget_next_id"
-        private const val DEFAULT_PANE_ORDER = "music,apps,phone,message,sensors,markers,pointers,system"
+        private const val DEFAULT_PANE_ORDER = "music,apps,contact,sensors,markers,pointers,system"
 
         private val FIXED_PANE_LABELS = mapOf(
             "music"    to "Music",
             "apps"     to "Apps",
-            "phone"    to "Phone",
-            "message"  to "Message",
+            "contact"  to "Contact",
             "sensors"  to "Sensors",
             "markers"  to "Markers",
             "pointers" to "Pointers",
@@ -486,8 +484,7 @@ class OverlayService : Service(), ServiceBridge {
                 when (id) {
                     "music"    -> MusicPane(bridge = this)
                     "apps"     -> AppsPane(bridge = this)
-                    "phone"    -> PhonePane(bridge = this)
-                    "message"  -> MessagePane(bridge = this)
+                    "contact"  -> ContactPane(bridge = this)
                     "sensors"  -> SensorsPane(bridge = this)
                     "markers"  -> MarkersPane(bridge = this)
                     "pointers" -> PointersPane(bridge = this)
@@ -496,7 +493,7 @@ class OverlayService : Service(), ServiceBridge {
                 }
             }
         return result.ifEmpty {
-            listOf(MusicPane(this), AppsPane(this), PhonePane(this), MessagePane(this), SensorsPane(this), MarkersPane(this), PointersPane(this), SystemPane(this))
+            listOf(MusicPane(this), AppsPane(this), ContactPane(this), SensorsPane(this), MarkersPane(this), PointersPane(this), SystemPane(this))
         }
     }
 
