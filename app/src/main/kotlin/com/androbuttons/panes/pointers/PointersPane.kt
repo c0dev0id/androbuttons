@@ -1,5 +1,6 @@
 package com.androbuttons.panes.pointers
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -11,6 +12,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -25,6 +27,7 @@ import com.androbuttons.common.Theme
 import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
+import com.androbuttons.common.roundedBg
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.pow
@@ -42,6 +45,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
 
     private companion object {
         const val KEY_POINTER_POIS = "pointer_pois"
+        val COORD_REGEX = Regex("""^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,\s]+\s*(-?\d{1,3}(?:\.\d+)?)\s*$""")
     }
 
     // ---- Data model ---------------------------------------------------------
@@ -59,6 +63,13 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
     // Preserved configure-view widgets so search can navigate back without data loss
     private var configureScrollView: ScrollView? = null
     private var configureSaveBtn: View? = null
+
+    // ---- Clipboard state ----------------------------------------------------
+
+    private var clipMgr: ClipboardManager? = null
+    private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
+    private var suggBar: LinearLayout? = null
+    private var suggLabel: TextView? = null
 
     // ---- PaneContent --------------------------------------------------------
 
@@ -85,11 +96,13 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
     override fun onPaused() {
         coordinator?.stop()
         coordinator = null
+        unregisterClipListener()
     }
 
     override fun onDestroy() {
         coordinator?.stop()
         coordinator = null
+        unregisterClipListener()
     }
 
     // ---- Main view ----------------------------------------------------------
@@ -183,6 +196,9 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         pane.removeAllViews()
         inConfigureView = true
 
+        clipMgr = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        var lastFocusedCoordField: EditText? = null
+
         data class Row(val nameField: EditText, val coordField: EditText)
         val rows = mutableListOf<Row>()
 
@@ -211,6 +227,9 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 background = null
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f)
                 setPadding(0, 0, 6.dp(), 0)
+                setOnFocusChangeListener { _, hasFocus ->
+                    if (hasFocus) lastFocusedCoordField = this
+                }
             }
             val row = Row(nameField, coordField)
             rows.add(row)
@@ -223,6 +242,22 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
                 isClickable = true
                 setOnClickListener { showSearchView(nameField, coordField) }
+            }
+
+            // Paste button — explicit clipboard paste for overlay windows where
+            // the long-press context menu is often suppressed by the system.
+            val pasteBtn = TextView(ctx).apply {
+                text = "⎘"   // U+2398 clipboard/helm symbol
+                textSize = 16f
+                setTextColor(Theme.primary)
+                gravity = Gravity.CENTER
+                setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+                isClickable = true
+                setOnClickListener {
+                    val coords = extractCoordsFromClipboard() ?: return@setOnClickListener
+                    coordField.setText(coords)
+                    coordField.setSelection(coords.length)
+                }
             }
 
             val removeBtn = TextView(ctx).apply {
@@ -250,6 +285,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 addView(nameField)
                 addView(coordField)
                 addView(searchBtn)
+                addView(pasteBtn)
                 addView(removeBtn)
             })
         }
@@ -269,7 +305,10 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             ).apply { topMargin = 8.dp() }
             setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
             isClickable = true
-            setOnClickListener { addPoiRow("", "") }
+            setOnClickListener {
+                // Pre-populate coord field when clipboard already holds valid coords.
+                addPoiRow("", extractCoordsFromClipboard() ?: "")
+            }
         }
         rowContainer.addView(addBtn)
 
@@ -279,6 +318,73 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         }
         configureScrollView = sv
         pane.addView(sv)
+
+        // ---- Clipboard suggestion bar ---------------------------------------
+        // Appears (with faint orange tint) when clipboard holds valid coords.
+        // "Apply" fills whichever coord field was most recently focused.
+
+        val label = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(Theme.textSecondary)
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(8.dp(), 0, 0, 0)
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        suggLabel = label
+
+        val applyBtn = TextView(ctx).apply {
+            text = "Apply"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Theme.primary)
+            gravity = Gravity.CENTER
+            setPadding(12.dp(), 0, 12.dp(), 0)
+            isClickable = true
+            setOnClickListener {
+                val coords = extractCoordsFromClipboard() ?: return@setOnClickListener
+                val target = lastFocusedCoordField ?: rows.lastOrNull()?.coordField ?: return@setOnClickListener
+                target.setText(coords)
+                target.setSelection(coords.length)
+            }
+        }
+
+        val bar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8.dp(), 6.dp(), 8.dp(), 6.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 4.dp() }
+            background = roundedBg(Theme.playingRow, 6, ctx)
+            addView(label)
+            addView(applyBtn)
+            visibility = View.GONE
+        }
+        suggBar = bar
+        pane.addView(bar)
+
+        // ---- Evaluate current clipboard, then register change listener ------
+
+        fun refreshSuggBar() {
+            val coords = extractCoordsFromClipboard()
+            if (coords != null) {
+                suggLabel?.text = "Clipboard: $coords"
+                suggBar?.visibility = View.VISIBLE
+            } else {
+                suggBar?.visibility = View.GONE
+            }
+        }
+
+        refreshSuggBar()
+
+        val listener = ClipboardManager.OnPrimaryClipChangedListener { refreshSuggBar() }
+        clipListener = listener
+        clipMgr?.addPrimaryClipChangedListener(listener)
+
+        // ---- Save button ----------------------------------------------------
 
         val saveBtn = TextView(ctx).apply {
             text = "Save"
@@ -294,6 +400,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
             isClickable = true
             setOnClickListener {
+                unregisterClipListener()
                 val newPois = rows.mapNotNull { (nameField, coordField) ->
                     val name = nameField.text.toString().trim()
                     parsePoi(name, coordField.text.toString().trim())
@@ -382,6 +489,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         val sb = configureSaveBtn ?: return
         pane.removeAllViews()
         pane.addView(sv)
+        suggBar?.let { pane.addView(it) }
         pane.addView(sb)
     }
 
@@ -583,5 +691,32 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         val lon = parts[0].trim().toDoubleOrNull() ?: return null
         val lat = parts[1].trim().toDoubleOrNull() ?: return null
         return Poi(name, lon, lat)
+    }
+
+    // ---- Clipboard helpers --------------------------------------------------
+
+    /**
+     * Reads the primary clip and returns a normalised "num1,num2" string if the
+     * clipboard text matches the coordinate pattern, or null otherwise.
+     * Accepts comma- or space-separated decimal pairs, with optional surrounding
+     * whitespace and negative values (e.g. "13.405,52.52", "13.405 52.52",
+     * "-3.7, 40.4").
+     */
+    private fun extractCoordsFromClipboard(): String? {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = cm.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        val raw = clip.getItemAt(0).coerceToText(ctx).toString()
+        val match = COORD_REGEX.matchEntire(raw.trim()) ?: return null
+        val (a, b) = match.destructured
+        return "$a,$b"
+    }
+
+    /** Removes the clipboard listener and clears suggestion-bar view references. */
+    private fun unregisterClipListener() {
+        clipListener?.let { clipMgr?.removePrimaryClipChangedListener(it) }
+        clipListener = null
+        suggBar = null
+        suggLabel = null
     }
 }
