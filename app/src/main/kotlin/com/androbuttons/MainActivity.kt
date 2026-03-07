@@ -37,6 +37,12 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
     }
 
+    private val bluetoothPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        checkAndRequestPermissions()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRequestPermissions()
@@ -77,6 +83,17 @@ class MainActivity : AppCompatActivity() {
             || ContextCompat.checkSelfPermission(this, sendSms) != PackageManager.PERMISSION_GRANTED) {
             contactsPermissionLauncher.launch(arrayOf(readContacts, callPhone, sendSms))
             return
+        }
+
+        // Stage 5: Nearby Devices — BLUETOOTH_CONNECT + BLUETOOTH_SCAN (API 31+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val btConnect = Manifest.permission.BLUETOOTH_CONNECT
+            val btScan = Manifest.permission.BLUETOOTH_SCAN
+            if (ContextCompat.checkSelfPermission(this, btConnect) != PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(this, btScan) != PackageManager.PERMISSION_GRANTED) {
+                bluetoothPermissionLauncher.launch(arrayOf(btConnect, btScan))
+                return
+            }
         }
 
         // All permissions handled — start the overlay service and exit
