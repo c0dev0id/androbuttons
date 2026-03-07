@@ -60,6 +60,12 @@ class LoadHistogramView(context: Context) : View(context) {
         strokeWidth = 1f
         pathEffect = android.graphics.DashPathEffect(floatArrayOf(4f, 4f), 0f)
     }
+    private val naLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#505050")
+        textSize = sp(9f)
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
 
     fun update(load1min: Float) {
         if (history.size >= HISTORY_SIZE) history.removeFirst()
@@ -84,7 +90,12 @@ class LoadHistogramView(context: Context) : View(context) {
         // Background
         canvas.drawRoundRect(0f, 0f, w, h, dp(6f), dp(6f), bgPaint)
 
-        if (history.isEmpty()) return
+        if (history.isEmpty()) {
+            canvas.drawText("N/A", w / 2f,
+                h / 2f - (naLabelPaint.descent() + naLabelPaint.ascent()) / 2f,
+                naLabelPaint)
+            return
+        }
 
         val maxLoad = numCores.toFloat()
 
@@ -101,7 +112,7 @@ class LoadHistogramView(context: Context) : View(context) {
 
         history.forEachIndexed { idx, load ->
             val fraction  = (load / maxLoad).coerceIn(0f, 1f)
-            val barHeight = fraction * plotH
+            val barHeight = if (load > 0f) (fraction * plotH).coerceAtLeast(dp(1f)) else 0f
             val left      = pad + idx * (barW + gap)
             val right     = left + barW
             val top       = plotBot - barHeight
