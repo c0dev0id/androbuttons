@@ -282,13 +282,13 @@ class OverlayService : Service(), ServiceBridge {
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                44.dp()
             )
         }
 
         titleArrowLeft = ImageView(this).apply {
             setImageResource(R.drawable.ic_nav_left)
-            layoutParams = LinearLayout.LayoutParams(28.dp(), 28.dp())
+            layoutParams = LinearLayout.LayoutParams(32.dp(), 32.dp())
             setColorFilter(if (currentPane > 0) Theme.primary else Theme.inactiveBg)
         }
         titleText = TextView(this).apply {
@@ -298,14 +298,13 @@ class OverlayService : Service(), ServiceBridge {
         }
         titleArrowRight = ImageView(this).apply {
             setImageResource(R.drawable.ic_nav_right)
-            layoutParams = LinearLayout.LayoutParams(28.dp(), 28.dp())
+            layoutParams = LinearLayout.LayoutParams(32.dp(), 32.dp())
             setColorFilter(if (currentPane < panes.size - 1) Theme.primary else Theme.inactiveBg)
         }
 
         titleLeftZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            setPadding(12.dp(), 12.dp(), 12.dp(), 6.dp())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply { weight = 1f }
+            layoutParams = LinearLayout.LayoutParams(44.dp(), LinearLayout.LayoutParams.MATCH_PARENT)
             alpha = if (currentPane > 0) 1f else 0.4f
             addView(titleArrowLeft)
             setOnClickListener { if (currentPane > 0) navigateToPane(currentPane - 1) }
@@ -313,24 +312,20 @@ class OverlayService : Service(), ServiceBridge {
 
         val centerZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            setPadding(0, 12.dp(), 0, 6.dp())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply { weight = 2f }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply { weight = 1f }
             addView(titleText)
         }
 
         titleRightZone = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            setPadding(12.dp(), 12.dp(), 12.dp(), 6.dp())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply { weight = 1f }
+            layoutParams = LinearLayout.LayoutParams(44.dp(), LinearLayout.LayoutParams.MATCH_PARENT)
             alpha = if (currentPane < panes.size - 1) 1f else 0.4f
             addView(titleArrowRight)
             setOnClickListener { if (currentPane < panes.size - 1) navigateToPane(currentPane + 1) }
         }
 
         fun verticalDivider() = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(1.dp(), 24.dp()).apply {
-                gravity = Gravity.CENTER_VERTICAL
-            }
+            layoutParams = LinearLayout.LayoutParams(1.dp(), LinearLayout.LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.parseColor("#33FFFFFF"))
         }
         bar.addView(titleLeftZone)
