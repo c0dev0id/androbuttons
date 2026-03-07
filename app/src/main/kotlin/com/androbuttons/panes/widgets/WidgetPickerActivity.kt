@@ -251,24 +251,19 @@ class WidgetPickerActivity : AppCompatActivity() {
                 component = configComponent
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingAppWidgetId)
             }
-            // Check visibility first (prevents ActivityNotFoundException on Android 11+).
-            // If resolvable, attempt to start; catch only SecurityException for the rare
-            // case where the activity exists but is not exported.
-            if (packageManager.resolveActivity(intent, 0) != null) {
-                try {
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(intent, REQUEST_CONFIGURE)
-                    return
-                } catch (_: SecurityException) {
-                    // Activity declared but not exported; cannot configure → don't add a broken widget.
-                    releaseAndFinish()
-                    return
-                }
-            } else {
-                // Configure component exists but isn't visible to us (Android 11+ package-visibility).
-                // Adding without configuration would leave a broken widget — discard instead.
-                releaseAndFinish()
-                return
+            // Attempt to launch the configure activity directly. On Android 11+ the
+            // AppWidget framework grants the host implicit visibility to configure
+            // activities, so startActivityForResult can succeed even when resolveActivity
+            // returns null. Only fall through to saveAndFinish() if the activity is
+            // genuinely unreachable (SecurityException / ActivityNotFoundException).
+            try {
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, REQUEST_CONFIGURE)
+                return  // wait for onActivityResult(REQUEST_CONFIGURE)
+            } catch (_: SecurityException) {
+                /* Not exported — add widget without initial configuration. */
+            } catch (_: android.content.ActivityNotFoundException) {
+                /* Unreachable — add widget without initial configuration. */
             }
         }
         saveAndFinish()
