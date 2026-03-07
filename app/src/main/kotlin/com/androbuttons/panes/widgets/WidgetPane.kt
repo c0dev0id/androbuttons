@@ -138,9 +138,8 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         val removedId = ids.removeAt(index)
         bridge.appWidgetHost.deleteAppWidgetId(removedId)
         widgetViewCache.remove(removedId)
-        saveWidgetIds(ids)
         focusIndex = if (ids.isEmpty()) -1 else index.coerceAtMost(ids.size - 1)
-        showWidgetView()
+        saveWidgetIds(ids) // prefListener fires synchronously → showWidgetView() with correct focusIndex
     }
 
     // ---- Widget view --------------------------------------------------------
@@ -237,7 +236,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
                     component = ComponentName(info.provider.packageName, info.provider.className)
                     putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(appWidgetId))
                 }
-                ctx.sendBroadcast(updateIntent)
+                try { ctx.sendBroadcast(updateIntent) } catch (_: Exception) { /* best-effort */ }
                 newView
             }
             // Detach from previous parent wrapper before adding to the new one
