@@ -145,7 +145,10 @@ class OverlayService : Service(), ServiceBridge {
         } else navBarHeight
 
     private val overlayWidth: Int
-        get() = (resources.displayMetrics.widthPixels * (1f / 3f)).toInt()
+        get() {
+            val fraction = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT) 0.45f else (1f / 3f)
+            return (resources.displayMetrics.widthPixels * fraction).toInt()
+        }
 
     private val overlayHeight: Int
         get() {
