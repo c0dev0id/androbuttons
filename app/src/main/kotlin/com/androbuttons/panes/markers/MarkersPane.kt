@@ -1,5 +1,6 @@
 package com.androbuttons.panes.markers
 
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -298,6 +299,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
 
     // ---- Marker action ------------------------------------------------------
 
+    @SuppressLint("MissingPermission")
     private fun onMarkerTapped(label: String) {
         if (pendingLabel != null) return
         val locMgr = locationManager ?: return
