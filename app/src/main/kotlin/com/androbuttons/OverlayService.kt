@@ -232,8 +232,7 @@ class OverlayService : Service(), ServiceBridge {
         val params = WindowManager.LayoutParams(
             overlayWidth, overlayHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.END or Gravity.TOP
@@ -284,9 +283,7 @@ class OverlayService : Service(), ServiceBridge {
         container.setOnKeyListener { _, keyCode, event ->
             if (event.action == KeyEvent.ACTION_DOWN) handleKey(keyCode) else false
         }
-        container.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) { hideOverlay(); true } else false
-        }
+
         return container
     }
 
@@ -334,7 +331,7 @@ class OverlayService : Service(), ServiceBridge {
         }
 
         val centerZone = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT).apply { weight = 1f }
             addView(titleText)
             isLongClickable = true
@@ -364,8 +361,7 @@ class OverlayService : Service(), ServiceBridge {
         paneDots.clear()
         val dotsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 8.dp())
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = 4.dp() }
             isLongClickable = true
             setOnLongClickListener { if (!inPaneManager) showPaneManager(); true }
         }
@@ -380,7 +376,7 @@ class OverlayService : Service(), ServiceBridge {
             }
             paneDots.add(dot); dotsRow.addView(dot)
         }
-        wrapper.addView(dotsRow)
+        centerZone.addView(dotsRow)
 
         wrapper.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1.dp())
