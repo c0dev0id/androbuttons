@@ -165,7 +165,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
             bm?.getConnectedDevices(BluetoothProfile.GATT)?.forEach { device ->
                 connectedAddresses.add(device.address)
             }
-        } catch (_: Exception) {}
+        } catch (_: SecurityException) {} catch (_: Exception) {}
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {

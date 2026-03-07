@@ -431,7 +431,27 @@ class OverlayService : Service(), ServiceBridge {
 
     private fun buildPanes(): List<PaneContent> {
         val raw = prefs.getString(KEY_PANE_ORDER, DEFAULT_PANE_ORDER) ?: DEFAULT_PANE_ORDER
-        val result = raw.split(",")
+        val stored = raw.split(",").filter { it.isNotBlank() }
+
+        // Inject any fixed panes that are entirely absent from the stored order.
+        // "Absent" means neither "id" nor "~id" is present, so user-disabled panes (~id)
+        // are not resurrected.
+        val storedIds = stored.map { it.removePrefix("~") }.toSet()
+        val defaultFixed = DEFAULT_PANE_ORDER.split(",")
+        val missingFixed = defaultFixed.filter { it !in storedIds }
+
+        val merged = if (missingFixed.isEmpty()) {
+            stored
+        } else {
+            val fixedEntries  = stored.filter { !it.removePrefix("~").startsWith("widget_") }
+            val widgetEntries = stored.filter {  it.removePrefix("~").startsWith("widget_") }
+            val insertOrder = defaultFixed.filter { it in missingFixed }
+            val updated = fixedEntries + insertOrder + widgetEntries
+            prefs.edit().putString(KEY_PANE_ORDER, updated.joinToString(",")).apply()
+            updated
+        }
+
+        val result = merged
             .filter { it.isNotBlank() && !it.startsWith("~") }
             .mapNotNull { id ->
                 when (id) {
