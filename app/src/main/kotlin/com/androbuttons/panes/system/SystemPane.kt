@@ -1,6 +1,7 @@
 package com.androbuttons.panes.system
 
 import android.content.Context
+import android.net.TrafficStats
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.wifi.WifiManager
@@ -207,7 +208,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                 if (coreLines.isEmpty()) return null
 
                 val currentStats = Array(coreLines.size) { i ->
-                    val parts = coreLines[i].split(" ").drop(1).map { it.toLongOrNull() ?: 0L }
+                    val parts = coreLines[i].trim().split(Regex("\\s+")).drop(1).map { it.toLongOrNull() ?: 0L }
                     LongArray(8) { j -> parts.getOrElse(j) { 0L } }
                 }
 
@@ -277,17 +278,32 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                 val parsed = lines.map { it.trim().split(Regex("\\s+")) }
 
                 if (diskDevice == null) {
+                    fun ioScore(parts: List<String>) =
+                        (parts.getOrNull(5)?.toLongOrNull() ?: 0L) +
+                        (parts.getOrNull(9)?.toLongOrNull() ?: 0L)
+
+                    // Primary: whole-disk devices (including vda for emulators)
                     val candidates = parsed.filter { parts ->
                         parts.size >= 14 &&
                         (parts[2].matches(Regex("sd[a-z]"))       ||
                          parts[2].matches(Regex("mmcblk\\d+"))    ||
                          parts[2].matches(Regex("nvme\\d+n\\d+")) ||
+                         parts[2].matches(Regex("vd[a-z]"))       ||
                          parts[2].matches(Regex("dm-\\d+")))
                     }
-                    diskDevice = candidates.maxByOrNull { parts ->
-                        (parts.getOrNull(5)?.toLongOrNull() ?: 0L) +
-                        (parts.getOrNull(9)?.toLongOrNull() ?: 0L)
-                    }?.getOrNull(2)
+                    diskDevice = candidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
+
+                    // Fallback: partition entries (when whole-disk rows are absent)
+                    if (diskDevice == null) {
+                        val partCandidates = parsed.filter { parts ->
+                            parts.size >= 14 &&
+                            (parts[2].matches(Regex("sd[a-z]\\d+"))        ||
+                             parts[2].matches(Regex("mmcblk\\d+p\\d+"))    ||
+                             parts[2].matches(Regex("nvme\\d+n\\d+p\\d+")) ||
+                             parts[2].matches(Regex("vd[a-z]\\d+")))
+                        }
+                        diskDevice = partCandidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
+                    }
                 }
 
                 val device = diskDevice ?: return null
@@ -317,29 +333,20 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         }
 
         // ---------------------------------------------------------------------
-        // /proc/net/dev  →  (rxKBps, txKBps) summed across all non-loopback ifaces
+        // TrafficStats  →  (rxKBps, txKBps) for all interfaces
+        //
+        // Replaces /proc/net/dev which is blocked by SELinux on Android 10+
+        // on many vendor builds. TrafficStats requires no permissions and has
+        // been available since API 8.
         // ---------------------------------------------------------------------
         private fun readNetworkIO(): Pair<Float, Float>? {
             return try {
-                val lines = BufferedReader(FileReader("/proc/net/dev")).use { it.readLines() }
-                // Skip first 2 header lines; columns: iface | rx_bytes … | tx_bytes …
-                // rx_bytes = col 1, tx_bytes = col 9 (0-based after splitting on whitespace)
-                var totalRx = 0L
-                var totalTx = 0L
-                for (line in lines.drop(2)) {
-                    val trimmed = line.trim()
-                    if (trimmed.isEmpty()) continue
-                    // Format: "iface: bytes packets errs drop fifo frame compressed multicast  bytes …"
-                    val colonIdx = trimmed.indexOf(':')
-                    if (colonIdx < 0) continue
-                    val iface = trimmed.substring(0, colonIdx).trim()
-                    if (iface == "lo") continue
-                    val fields = trimmed.substring(colonIdx + 1).trim().split(Regex("\\s+"))
-                    totalRx += fields.getOrNull(0)?.toLongOrNull() ?: 0L
-                    totalTx += fields.getOrNull(8)?.toLongOrNull() ?: 0L
-                }
+                val totalRx = TrafficStats.getTotalRxBytes()
+                val totalTx = TrafficStats.getTotalTxBytes()
+                // TrafficStats.UNSUPPORTED == -1; bail out if the kernel doesn't support it
+                if (totalRx < 0 || totalTx < 0) return null
 
-                val nowMs = System.currentTimeMillis()
+                val nowMs    = System.currentTimeMillis()
                 val prevRx   = prevNetRxBytes
                 val prevTx   = prevNetTxBytes
                 val prevTime = prevNetTimeMs

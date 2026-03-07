@@ -590,12 +590,7 @@ class SignalView(context: Context) : View(context) {
         color = Color.parseColor("#2A2A2A")
         style = Paint.Style.FILL
     }
-    private val wifiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#42A5F5")
-        style = Paint.Style.FILL
-    }
-    private val mobilePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#66BB6A")
+    private val barFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -659,7 +654,7 @@ class SignalView(context: Context) : View(context) {
             ((dbm - minDbm) / (maxDbm - minDbm)).coerceIn(0f, 1f)
 
         fun drawRow(top: Float, rowLabel: String, dbm: Int?, minDbm: Float, maxDbm: Float,
-                    fillPaint: Paint, lp: Paint, offText: String) {
+                    lp: Paint, offText: String) {
             val bot = top + barH
             val r = barH / 2f
             val textY = top + barH / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f
@@ -668,19 +663,43 @@ class SignalView(context: Context) : View(context) {
             canvas.drawRoundRect(barLeft, top, barRight, bot, r, r, trackPaint)
 
             if (dbm != null) {
-                val frac = fraction(dbm, minDbm, maxDbm)
+                val color = signalColor(dbm)
+                val frac  = fraction(dbm, minDbm, maxDbm)
                 if (frac > 0f) {
-                    canvas.drawRoundRect(barLeft, top, barLeft + (barRight - barLeft) * frac, bot, r, r, fillPaint)
+                    barFillPaint.color = color
+                    canvas.drawRoundRect(barLeft, top, barLeft + (barRight - barLeft) * frac, bot, r, r, barFillPaint)
                 }
+                valuePaint.color = color
                 canvas.drawText("${dbm}dBm", barRight + dp(4f), textY, valuePaint)
             } else {
                 canvas.drawText(offText, barRight + dp(4f), textY, offValuePaint)
             }
         }
 
-        drawRow(pad,              "WiFi",   wifiRssi,  WIFI_MIN,   WIFI_MAX,   wifiPaint,   wifiLabelPaint,   "OFF")
-        drawRow(pad + barH + gap, "Mobile", mobileDbm, MOBILE_MIN, MOBILE_MAX, mobilePaint, mobileLabelPaint, "NO SIG")
+        drawRow(pad,              "WiFi",   wifiRssi,  WIFI_MIN,   WIFI_MAX,   wifiLabelPaint,   "OFF")
+        drawRow(pad + barH + gap, "Mobile", mobileDbm, MOBILE_MIN, MOBILE_MAX, mobileLabelPaint, "NO SIG")
     }
+
+    // Color stops: ≥-40 light-green · -80 dark-green · -95 orange · ≤-100 red
+    private fun signalColor(dbm: Int): Int {
+        val lightGreen = Color.parseColor("#81C784")
+        val darkGreen  = Color.parseColor("#388E3C")
+        val orange     = Color.parseColor("#F57C00")
+        val red        = Color.parseColor("#F44336")
+        return when {
+            dbm >= -40  -> lightGreen
+            dbm >= -80  -> lerpColor(lightGreen, darkGreen, (-dbm - 40f) / 40f)
+            dbm >= -95  -> lerpColor(darkGreen,  orange,    (-dbm - 80f) / 15f)
+            dbm >= -100 -> lerpColor(orange,     red,       (-dbm - 95f) / 5f)
+            else        -> red
+        }
+    }
+
+    private fun lerpColor(a: Int, b: Int, t: Float): Int = Color.rgb(
+        (Color.red(a)   + t * (Color.red(b)   - Color.red(a))).toInt(),
+        (Color.green(a) + t * (Color.green(b) - Color.green(a))).toInt(),
+        (Color.blue(a)  + t * (Color.blue(b)  - Color.blue(a))).toInt()
+    )
 
     private fun dp(v: Float) = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
