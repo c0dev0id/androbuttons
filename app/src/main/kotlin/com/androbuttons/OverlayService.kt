@@ -3,6 +3,7 @@ package com.androbuttons
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.appwidget.AppWidgetHost
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -39,6 +40,7 @@ import com.androbuttons.panes.music.MusicPane
 import com.androbuttons.panes.pointers.PointersPane
 import com.androbuttons.panes.sensors.SensorsPane
 import com.androbuttons.panes.system.SystemPane
+import com.androbuttons.panes.widgets.AppWidgetHostManager
 import com.androbuttons.panes.widgets.WidgetPane
 
 class OverlayService : Service(), ServiceBridge {
@@ -166,6 +168,7 @@ class OverlayService : Service(), ServiceBridge {
         panes = buildPanes()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        AppWidgetHostManager.getHost(this).startListening()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -178,6 +181,7 @@ class OverlayService : Service(), ServiceBridge {
         super.onDestroy()
         panes.forEach { it.onDestroy() }
         removeOverlay()
+        AppWidgetHostManager.getHost(this).stopListening()
     }
 
     // =========================================================================
@@ -185,6 +189,7 @@ class OverlayService : Service(), ServiceBridge {
     // =========================================================================
 
     override val context: Context get() = this
+    override val appWidgetHost: AppWidgetHost get() = AppWidgetHostManager.getHost(this)
 
     override fun hideOverlay() {
         val view = overlayView ?: return
@@ -678,7 +683,18 @@ class OverlayService : Service(), ServiceBridge {
         val paneId = managerOrder.removeAt(rowIndex)
         val row = managerRowViews.removeAt(rowIndex)
         managerRowContainer?.removeView(row)
-        prefs.edit().remove("${paneId}_title").remove("${paneId}_widgets").apply()
+        // Release any bound Android widget IDs before clearing prefs
+        val widgetIds = prefs.getString("${paneId}_appwidget_ids", null)
+        if (!widgetIds.isNullOrBlank()) {
+            val host = AppWidgetHostManager.getHost(this)
+            widgetIds.split(",").mapNotNull { it.trim().toIntOrNull() }
+                .forEach { host.deleteAppWidgetId(it) }
+        }
+        prefs.edit()
+            .remove("${paneId}_title")
+            .remove("${paneId}_widgets")
+            .remove("${paneId}_appwidget_ids")
+            .apply()
     }
 
     private fun addWidgetPane() {
