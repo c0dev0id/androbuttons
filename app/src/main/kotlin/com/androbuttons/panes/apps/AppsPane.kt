@@ -362,9 +362,22 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                             // Restore original row visibility
                             v.visibility = View.VISIBLE
 
-                            // Commit the move
+                            // Capture indices before resetting state
                             val fromIdx = sortDragIndex
                             val toIdx = sortDragTargetIndex.coerceIn(0, (appEntries.size - 1).coerceAtLeast(0))
+
+                            // Reset sorting state BEFORE modifying the view hierarchy.
+                            // removeAllViews() calls cancelTouchTarget() on each child, which
+                            // dispatches a synthetic ACTION_CANCEL to the active touch target (v).
+                            // Clearing sortingMode first prevents that re-entrant call from
+                            // running the drop logic a second time and crashing with
+                            // "The specified child already has a parent".
+                            sortingMode = false
+                            sortDragIndex = -1
+                            sortDragTargetIndex = -1
+                            appScrollView?.requestDisallowInterceptTouchEvent(false)
+
+                            // Commit the move
                             if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
                                 appEntries.add(toIdx, appEntries.removeAt(fromIdx))
                                 appButtonViews.add(toIdx, appButtonViews.removeAt(fromIdx))
@@ -376,10 +389,6 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                                 appButtonViews.forEach { container.addView(it) }
                             }
 
-                            sortingMode = false
-                            sortDragIndex = -1
-                            sortDragTargetIndex = -1
-                            appScrollView?.requestDisallowInterceptTouchEvent(false)
                             saveSelectedApps(appEntries.map { it.label to it.packageName })
                             refreshAppList()
                         }
