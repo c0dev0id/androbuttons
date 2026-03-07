@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.os.StatFs
 import android.telephony.TelephonyManager
 import android.view.View
@@ -200,7 +201,10 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                 val line = BufferedReader(FileReader("/proc/loadavg")).use { it.readLine() }
                     ?: return null
                 line.trim().split(Regex("\\s+")).getOrNull(0)?.toFloatOrNull()
-            } catch (_: Exception) { null }
+            } catch (e: Exception) {
+                Log.e("SystemPane", "readLoadAvg: failed to read /proc/loadavg", e)
+                null
+            }
         }
 
         // ---------------------------------------------------------------------
