@@ -58,8 +58,12 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
     private var appScrollView: ScrollView? = null
     private val appButtonViews = mutableListOf<LinearLayout>()
     private var appButtonList: LinearLayout? = null
-    private var sortingMode   = false
-    private var sortDragIndex = -1
+    private var sortingMode              = false
+    private var sortDragIndex            = -1
+    private var sortDragTargetIndex      = -1
+    private var sortDragGhost: View?     = null
+    private var sortDragGhostOffsetY     = 0f
+    private var sortDragGhostBaseScreenY = 0f
 
     private var paneRoot: LinearLayout? = null
 
@@ -268,9 +272,57 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                     return true
                 }
                 override fun onLongPress(e: MotionEvent) {
+                    val currentIndex = appButtonViews.indexOf(this@apply)
+                    if (currentIndex < 0) return
                     sortingMode = true
-                    sortDragIndex = index
-                    this@apply.background = buttonBg(true, ctx)
+                    sortDragIndex = currentIndex
+                    sortDragTargetIndex = currentIndex
+
+                    // Capture finger offset from the row's top on screen
+                    val rowLoc = IntArray(2)
+                    this@apply.getLocationOnScreen(rowLoc)
+                    sortDragGhostOffsetY = e.rawY - rowLoc[1]
+
+                    // Compute ghost's natural screen Y: it will be placed at the bottom of the container
+                    val container = appButtonList ?: return
+                    val containerLoc = IntArray(2)
+                    container.getLocationOnScreen(containerLoc)
+                    sortDragGhostBaseScreenY = (containerLoc[1] + container.height).toFloat()
+
+                    // Build a semi-transparent ghost copy of the row (no interaction)
+                    val ghost = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = 8.dp() }
+                        background = buttonBg(true, ctx)
+                        alpha = 0.5f
+                        elevation = 8f
+                        translationY = (rowLoc[1] - sortDragGhostBaseScreenY)
+                        if (icon != null) {
+                            addView(ImageView(ctx).apply {
+                                setImageDrawable(icon)
+                                val size = 36.dp()
+                                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = 10.dp() }
+                                scaleType = ImageView.ScaleType.FIT_CENTER
+                            })
+                        }
+                        addView(TextView(ctx).apply {
+                            text = entry.label
+                            textSize = 16f
+                            setTypeface(null, Typeface.BOLD)
+                            setTextColor(if (entry.isInstalled) Color.WHITE else Theme.textSecondary)
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply { weight = 1f }
+                        })
+                    }
+                    sortDragGhost = ghost
+                    container.addView(ghost)
+
+                    // Hide the original row as a placeholder (keeps its space)
+                    this@apply.visibility = View.INVISIBLE
                     appScrollView?.requestDisallowInterceptTouchEvent(true)
                 }
             })
@@ -282,14 +334,51 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
                     MotionEvent.ACTION_CANCEL -> v.isPressed = false
                 }
                 val handled = gestureDetector.onTouchEvent(event)
-                if (sortingMode && sortDragIndex == index) {
+                if (sortingMode) {
                     when (event.action) {
                         MotionEvent.ACTION_MOVE -> {
+                            val ghost = sortDragGhost
+                            if (ghost != null) {
+                                ghost.translationY = event.rawY - sortDragGhostOffsetY - sortDragGhostBaseScreenY
+                            }
                             val newIdx = getIndexAtY(event.rawY)
-                            if (newIdx != sortDragIndex) { swapAppButtons(sortDragIndex, newIdx); sortDragIndex = newIdx }
+                            if (newIdx != sortDragTargetIndex) {
+                                sortDragTargetIndex = newIdx
+                                appButtonViews.forEachIndexed { i, btn ->
+                                    btn.background = if (i == newIdx && i != sortDragIndex) {
+                                        buttonBg(true, ctx)
+                                    } else {
+                                        buttonBg(false, ctx)
+                                    }
+                                }
+                            }
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            sortingMode = false; sortDragIndex = -1
+                            // Remove ghost
+                            val container = appButtonList
+                            sortDragGhost?.let { container?.removeView(it) }
+                            sortDragGhost = null
+
+                            // Restore original row visibility
+                            v.visibility = View.VISIBLE
+
+                            // Commit the move
+                            val fromIdx = sortDragIndex
+                            val toIdx = sortDragTargetIndex.coerceIn(0, (appEntries.size - 1).coerceAtLeast(0))
+                            if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                                appEntries.add(toIdx, appEntries.removeAt(fromIdx))
+                                appButtonViews.add(toIdx, appButtonViews.removeAt(fromIdx))
+                            }
+
+                            // Rebuild container child order
+                            if (container != null) {
+                                container.removeAllViews()
+                                appButtonViews.forEach { container.addView(it) }
+                            }
+
+                            sortingMode = false
+                            sortDragIndex = -1
+                            sortDragTargetIndex = -1
                             appScrollView?.requestDisallowInterceptTouchEvent(false)
                             saveSelectedApps(appEntries.map { it.label to it.packageName })
                             refreshAppList()
