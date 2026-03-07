@@ -115,7 +115,7 @@ class LoadHistogramView(context: Context) : View(context) {
 
         // Current value label (top-right)
         val latest = history.last()
-        canvas.drawText("%.2f".format(latest), w - dp(4f), pad + labelPaint.textSize, labelPaint)
+        canvas.drawText("%.2f".format(latest), w - dp(4f), pad - labelPaint.ascent(), labelPaint)
     }
 
     private fun dp(v: Float) = TypedValue.applyDimension(
