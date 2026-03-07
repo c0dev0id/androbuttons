@@ -766,9 +766,22 @@ class OverlayService : Service(), ServiceBridge {
                         // Restore original row visibility
                         row.visibility = View.VISIBLE
 
-                        // Commit the move
+                        // Capture indices before resetting state
                         val fromIdx = managerSortDragIndex
                         val toIdx = managerDragTargetIndex.coerceIn(0, (managerRowViews.size - 1).coerceAtLeast(0))
+
+                        // Reset sorting state BEFORE modifying the view hierarchy.
+                        // removeAllViews() calls cancelTouchTarget() on each child, which
+                        // dispatches a synthetic ACTION_CANCEL to the active touch target (row).
+                        // Clearing managerSortingMode first prevents that re-entrant call from
+                        // running the drop logic a second time and crashing with
+                        // "The specified child already has a parent".
+                        managerSortingMode = false
+                        managerSortDragIndex = -1
+                        managerDragTargetIndex = -1
+                        managerRowScroll?.requestDisallowInterceptTouchEvent(false)
+
+                        // Commit the move
                         if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
                             managerOrder.add(toIdx, managerOrder.removeAt(fromIdx))
                             managerRowViews.add(toIdx, managerRowViews.removeAt(fromIdx))
@@ -782,11 +795,6 @@ class OverlayService : Service(), ServiceBridge {
 
                         // Reset all row backgrounds
                         managerRowViews.forEach { it.background = buttonBg(false, this@OverlayService) }
-
-                        managerSortingMode = false
-                        managerSortDragIndex = -1
-                        managerDragTargetIndex = -1
-                        managerRowScroll?.requestDisallowInterceptTouchEvent(false)
                     }
                 }
                 true
