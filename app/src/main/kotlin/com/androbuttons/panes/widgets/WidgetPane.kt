@@ -408,7 +408,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     // ---- UI helpers ---------------------------------------------------------
 
     private fun configureToggleButton() = TextView(ctx).apply {
-        text = "Configure"
+        text = if (inConfigureView) "Done" else "Configure"
         textSize = 16f
         setTypeface(null, Typeface.BOLD)
         gravity = Gravity.CENTER
