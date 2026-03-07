@@ -16,8 +16,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
+import android.content.Intent
+import android.content.IntentFilter
+import com.androbuttons.BatteryView
 import com.androbuttons.LoadHistogramView
-import com.androbuttons.DiskIoView
 import com.androbuttons.DiskSpaceView
 import com.androbuttons.MemoryBarView
 import com.androbuttons.NetworkIoView
@@ -38,7 +40,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     private var loadHistogramView: LoadHistogramView? = null
     private var memoryBarView:  MemoryBarView?  = null
     private var diskSpaceView:  DiskSpaceView?  = null
-    private var diskIoView:     DiskIoView?     = null
+    private var batteryView:    BatteryView?    = null
     private var networkIoView:  NetworkIoView?  = null
     private var signalView:     SignalView?      = null
 
@@ -91,8 +93,8 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         // --- Disk Space ---
         diskSpaceView = addSection("DISK SPACE", DiskSpaceView(ctx))
 
-        // --- Disk I/O ---
-        diskIoView    = addSection("DISK I/O",   DiskIoView(ctx))
+        // --- Battery ---
+        batteryView   = addSection("BATTERY",    BatteryView(ctx))
 
         // --- Network I/O ---
         networkIoView = addSection("NETWORK I/O", NetworkIoView(ctx))
@@ -118,7 +120,6 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     override fun onPaused() {
         monitor?.stop()
         monitor = null
-        diskIoView?.maxSeen    = 1f
         networkIoView?.maxSeen = 1f
     }
 
@@ -145,12 +146,6 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
 
         private val handler = Handler(Looper.getMainLooper())
 
-        // Disk I/O state
-        private var prevDiskRead:   Long   = 0L
-        private var prevDiskWrite:  Long   = 0L
-        private var prevDiskTimeMs: Long   = 0L
-        private var diskDevice:     String? = null
-
         // Network I/O state
         private var prevNetRxBytes:  Long = 0L
         private var prevNetTxBytes:  Long = 0L
@@ -162,7 +157,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                     val loadResult    = readLoadAvg()
                     val memResult     = readMemInfo()
                     val diskSpResult  = readDiskSpace()
-                    val diskIoResult  = readDiskIO()
+                    val battResult    = readBattery()
                     val netResult     = readNetworkIO()
                     val signalResult  = readSignalStrengths()
 
@@ -176,9 +171,8 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                         diskSpResult?.let { (used, total) ->
                             diskSpaceView?.update(used, total)
                         }
-                        diskIoResult?.let { (readMBps, writeMBps) ->
-                            diskIoView?.update(readMBps, writeMBps)
-                        }
+                        val (tempC, voltMv) = battResult
+                        batteryView?.update(tempC, voltMv)
                         netResult?.let { (rxKBps, txKBps) ->
                             networkIoView?.update(rxKBps, txKBps)
                         }
@@ -246,72 +240,22 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         }
 
         // ---------------------------------------------------------------------
-        // /proc/diskstats  →  (readMBps, writeMBps)
+        // Battery intent  →  (tempC, voltMv)
         //
-        // Device detection is intentionally broad: sd[a-z], mmcblk\d+,
-        // nvme\d+n\d+, and dm-\d+ (device-mapper, common on encrypted Android).
-        // When multiple candidates exist, the one with the highest cumulative
-        // sector count (reads + writes) is chosen so the most-active storage
-        // path wins automatically.
+        // ACTION_BATTERY_CHANGED is a sticky broadcast; registering a null
+        // receiver returns the last broadcast without needing a persistent
+        // listener. No permissions required.
         // ---------------------------------------------------------------------
-        private fun readDiskIO(): Pair<Float, Float>? {
+        private fun readBattery(): Pair<Float?, Int?> {
             return try {
-                val lines = BufferedReader(FileReader("/proc/diskstats")).use { it.readLines() }
-                val parsed = lines.map { it.trim().split(Regex("\\s+")) }
-
-                if (diskDevice == null) {
-                    fun ioScore(parts: List<String>) =
-                        (parts.getOrNull(5)?.toLongOrNull() ?: 0L) +
-                        (parts.getOrNull(9)?.toLongOrNull() ?: 0L)
-
-                    // Primary: whole-disk devices (including vda for emulators)
-                    val candidates = parsed.filter { parts ->
-                        parts.size >= 14 &&
-                        (parts[2].matches(Regex("sd[a-z]"))       ||
-                         parts[2].matches(Regex("mmcblk\\d+"))    ||
-                         parts[2].matches(Regex("nvme\\d+n\\d+")) ||
-                         parts[2].matches(Regex("vd[a-z]"))       ||
-                         parts[2].matches(Regex("dm-\\d+")))
-                    }
-                    diskDevice = candidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
-
-                    // Fallback: partition entries (when whole-disk rows are absent)
-                    if (diskDevice == null) {
-                        val partCandidates = parsed.filter { parts ->
-                            parts.size >= 14 &&
-                            (parts[2].matches(Regex("sd[a-z]\\d+"))        ||
-                             parts[2].matches(Regex("mmcblk\\d+p\\d+"))    ||
-                             parts[2].matches(Regex("nvme\\d+n\\d+p\\d+")) ||
-                             parts[2].matches(Regex("vd[a-z]\\d+")))
-                        }
-                        diskDevice = partCandidates.maxByOrNull { ioScore(it) }?.getOrNull(2)
-                    }
-                }
-
-                val device = diskDevice ?: return null
-                val parts  = parsed.firstOrNull { it.getOrNull(2) == device } ?: return null
-
-                val sectorsRead  = parts.getOrNull(5)?.toLongOrNull() ?: return null
-                val sectorsWrite = parts.getOrNull(9)?.toLongOrNull() ?: return null
-                val nowMs = System.currentTimeMillis()
-
-                val prevRead  = prevDiskRead
-                val prevWrite = prevDiskWrite
-                val prevTime  = prevDiskTimeMs
-
-                prevDiskRead   = sectorsRead
-                prevDiskWrite  = sectorsWrite
-                prevDiskTimeMs = nowMs
-
-                if (prevTime == 0L) return Pair(0f, 0f)
-
-                val elapsedSec = (nowMs - prevTime) / 1000f
-                if (elapsedSec <= 0f) return Pair(0f, 0f)
-
-                val readMBps  = ((sectorsRead  - prevRead)  * 512L / 1_000_000f) / elapsedSec
-                val writeMBps = ((sectorsWrite - prevWrite) * 512L / 1_000_000f) / elapsedSec
-                Pair(readMBps.coerceAtLeast(0f), writeMBps.coerceAtLeast(0f))
-            } catch (_: Exception) { null }
+                val intent = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val tempC  = intent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+                                 ?.takeIf { it > Int.MIN_VALUE }
+                                 ?.let { it / 10f }
+                val voltMv = intent?.getIntExtra(android.os.BatteryManager.EXTRA_VOLTAGE, Int.MIN_VALUE)
+                                 ?.takeIf { it > Int.MIN_VALUE }
+                Pair(tempC, voltMv)
+            } catch (_: Exception) { Pair(null, null) }
         }
 
         // ---------------------------------------------------------------------
