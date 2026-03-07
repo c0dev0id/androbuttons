@@ -431,10 +431,15 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     private fun resolveWidgetHeight(info: AppWidgetProviderInfo): Int {
         val minHeightDp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && info.targetCellHeight > 0) {
             info.targetCellHeight * 72  // ~72 dp per standard home-screen cell (API 31+)
+        } else if (info.minHeight > 0) {
+            // minHeight is the widget's natural/preferred height; use it first.
+            info.minHeight
         } else if (info.minResizeHeight > 0) {
+            // minResizeHeight is the floor the user can drag the widget down to;
+            // only fall back here when minHeight is absent.
             info.minResizeHeight
         } else {
-            info.minHeight
+            0
         }
         return if (minHeightDp > 0) minHeightDp.dp().coerceAtLeast(100.dp()) else 120.dp()
     }
