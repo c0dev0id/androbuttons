@@ -11,13 +11,18 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
+import com.androbuttons.common.Theme
+import com.androbuttons.common.actionButtonBg
 import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
 import java.io.File
@@ -36,8 +41,9 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     // ---- Constants ----------------------------------------------------------
 
     private companion object {
-        val MARKER_LABELS = listOf("Good Road", "Bad Road", "Nice View", "Map Error", "Blocked")
-        const val AUTHORITY      = "com.androbuttons.fileprovider"
+        val DEFAULT_LABELS = listOf("Good Road", "Bad Road", "Nice View", "Map Error", "Blocked")
+        const val KEY_MARKER_LABELS  = "marker_labels"
+        const val AUTHORITY          = "com.androbuttons.fileprovider"
         val NAV_PACKAGES = listOf(
             "com.thorkracing.dmd2launcher",
         )
@@ -50,6 +56,11 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
 
     private var focusIndex = 0
     private val markerButtons = mutableListOf<TextView>()
+    private var markerLabels: List<String> = DEFAULT_LABELS
+    private var inConfigureView = false
+
+    private var paneRoot: LinearLayout? = null
+    private var markerScrollView: ScrollView? = null
 
     private var locationManager: LocationManager? = null
     private var pendingListener: LocationListener? = null
@@ -73,19 +84,16 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             isClickable = true
             setOnTouchListener(bridge.makePaneSwipeListener())
         }
-
-        markerButtons.clear()
-        MARKER_LABELS.forEachIndexed { i, label ->
-            val btn = buildMarkerButton(label, isFocused = i == 0)
-            markerButtons.add(btn)
-            pane.addView(btn)
-        }
+        paneRoot = pane
+        showMarkersView()
         return pane
     }
 
     override fun onResumed() {
-        focusIndex = 0
-        refreshFocus()
+        if (!inConfigureView) {
+            focusIndex = 0
+            refreshFocus()
+        }
     }
 
     override fun onPaused() {
@@ -97,6 +105,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     override fun onUp(): Boolean {
+        if (inConfigureView) return true
         if (focusIndex > 0) {
             focusIndex--
             refreshFocus()
@@ -105,6 +114,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     override fun onDown(): Boolean {
+        if (inConfigureView) return true
         if (focusIndex < markerButtons.size - 1) {
             focusIndex++
             refreshFocus()
@@ -113,8 +123,149 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     override fun onEnter(): Boolean {
+        if (inConfigureView) return true
         markerButtons.getOrNull(focusIndex)?.performClick()
         return true
+    }
+
+    // ---- Markers view -------------------------------------------------------
+
+    private fun showMarkersView() {
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+        inConfigureView = false
+
+        markerLabels = loadMarkerLabels()
+        focusIndex = 0
+        markerButtons.clear()
+
+        val buttonList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        markerLabels.forEachIndexed { i, label ->
+            val btn = buildMarkerButton(label, isFocused = i == 0)
+            markerButtons.add(btn)
+            buttonList.addView(btn)
+        }
+
+        val scrollView = ScrollView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(buttonList)
+        }
+        markerScrollView = scrollView
+        pane.addView(scrollView)
+
+        pane.addView(TextView(ctx).apply {
+            text = "Configure"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Theme.textSecondary)
+            background = actionButtonBg(Theme.inactiveBg, ctx)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = true
+            setOnClickListener { showConfigureView() }
+        })
+    }
+
+    // ---- Configure view -----------------------------------------------------
+
+    private fun showConfigureView() {
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+        inConfigureView = true
+
+        val editFields = mutableListOf<EditText>()
+
+        val rowContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        fun addLabelRow(initial: String) {
+            val editText = EditText(ctx).apply {
+                setText(initial)
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                setHintTextColor(Theme.textSecondary)
+                hint = "Label"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                background = null
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setPadding(0, 0, 8.dp(), 0)
+            }
+            editFields.add(editText)
+
+            val removeBtn = TextView(ctx).apply {
+                text = "✕"
+                textSize = 16f
+                setTextColor(Theme.textSecondary)
+                gravity = Gravity.CENTER
+                setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+                isClickable = true
+                setOnClickListener {
+                    editFields.remove(editText)
+                    rowContainer.removeView(this.parent as View)
+                }
+            }
+
+            rowContainer.addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 4.dp() }
+                background = buttonBg(false, ctx)
+                addView(editText)
+                addView(removeBtn)
+            })
+        }
+
+        markerLabels.forEach { addLabelRow(it) }
+
+        val addBtn = TextView(ctx).apply {
+            text = "+ Add"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Theme.textSecondary)
+            background = actionButtonBg(Theme.inactiveBg, ctx)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
+            isClickable = true
+            setOnClickListener { addLabelRow("") }
+        }
+        rowContainer.addView(addBtn)
+
+        pane.addView(ScrollView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(rowContainer)
+        })
+
+        pane.addView(TextView(ctx).apply {
+            text = "Save"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = actionButtonBg(Theme.primary, ctx)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = true
+            setOnClickListener {
+                val newLabels = editFields.map { it.text.toString().trim() }.filter { it.isNotEmpty() }
+                saveMarkerLabels(newLabels)
+                showMarkersView()
+            }
+        })
     }
 
     // ---- Button builder -----------------------------------------------------
@@ -151,7 +302,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         if (pendingLabel != null) return
         val locMgr = locationManager ?: return
 
-        val btnIndex = MARKER_LABELS.indexOf(label)
+        val btnIndex = markerLabels.indexOf(label)
         val btn = markerButtons.getOrNull(btnIndex) ?: return
 
         pendingLabel = label
@@ -223,7 +374,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
             pendingListener = null
         }
         pendingButton?.let { btn ->
-            val idx = MARKER_LABELS.indexOf(pendingOriginalLabel)
+            val idx = markerLabels.indexOf(pendingOriginalLabel)
             btn.background = buttonBg(idx == focusIndex, ctx)
             btn.text = pendingOriginalLabel ?: ""
             btn.setTextColor(Color.WHITE)
@@ -243,7 +394,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     private fun writeGpxFile(label: String, location: Location): File {
-        val dateForName = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val dateDisplay = SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date())
         val isoTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date(location.time))
@@ -256,7 +407,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
      xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <wpt lat="${location.latitude}" lon="${location.longitude}">
     <time>$isoTime</time>
-    <name>Marker $dateForName</name>
+    <name>$label ($dateDisplay)</name>
     <desc>$label</desc>
   </wpt>
 </gpx>"""
@@ -308,7 +459,7 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         btn.setBackgroundColor(Color.parseColor("#388E3C"))
         btn.setTextColor(Color.WHITE)
         handler.postDelayed({
-            val idx = MARKER_LABELS.indexOf(originalLabel)
+            val idx = markerLabels.indexOf(originalLabel)
             btn.background = buttonBg(idx == focusIndex, ctx)
             btn.text = originalLabel
             btn.setTextColor(Color.WHITE)
@@ -323,10 +474,26 @@ class MarkersPane(private val bridge: ServiceBridge) : PaneContent {
         btn.text = "No GPS signal"
         btn.setTextColor(Color.parseColor("#F57C00"))
         handler.postDelayed({
-            val idx = MARKER_LABELS.indexOf(originalLabel)
+            val idx = markerLabels.indexOf(originalLabel)
             btn.background = buttonBg(idx == focusIndex, ctx)
             btn.text = originalLabel
             btn.setTextColor(Color.WHITE)
         }, 2_000L)
+    }
+
+    // ---- Prefs helpers ------------------------------------------------------
+
+    private fun loadMarkerLabels(): List<String> {
+        val raw = bridge.getStringPref(KEY_MARKER_LABELS, null)
+        if (raw == null) {
+            saveMarkerLabels(DEFAULT_LABELS)
+            return DEFAULT_LABELS
+        }
+        val loaded = raw.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        return loaded.ifEmpty { DEFAULT_LABELS }
+    }
+
+    private fun saveMarkerLabels(labels: List<String>) {
+        bridge.putStringPref(KEY_MARKER_LABELS, labels.joinToString("\n"))
     }
 }
