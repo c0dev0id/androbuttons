@@ -68,12 +68,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Stage 4: Contacts + Call Phone (needed for Phone pane)
+        // Stage 4: Contacts + Call Phone + Send SMS (needed for Phone and Message panes)
         val readContacts = Manifest.permission.READ_CONTACTS
         val callPhone = Manifest.permission.CALL_PHONE
+        val sendSms = Manifest.permission.SEND_SMS
         if (ContextCompat.checkSelfPermission(this, readContacts) != PackageManager.PERMISSION_GRANTED
-            || ContextCompat.checkSelfPermission(this, callPhone) != PackageManager.PERMISSION_GRANTED) {
-            contactsPermissionLauncher.launch(arrayOf(readContacts, callPhone))
+            || ContextCompat.checkSelfPermission(this, callPhone) != PackageManager.PERMISSION_GRANTED
+            || ContextCompat.checkSelfPermission(this, sendSms) != PackageManager.PERMISSION_GRANTED) {
+            contactsPermissionLauncher.launch(arrayOf(readContacts, callPhone, sendSms))
             return
         }
 
