@@ -349,117 +349,6 @@ class DiskSpaceView(context: Context) : View(context) {
 }
 
 // ---------------------------------------------------------------------------
-// DiskIoView
-//
-// Two horizontal bars: READ (blue) and WRITE (red).
-// Dynamic max auto-expands; floor is 1 MB/s.
-// ---------------------------------------------------------------------------
-class DiskIoView(context: Context) : View(context) {
-
-    private var readMBps:  Float = 0f
-    private var writeMBps: Float = 0f
-    var maxSeen: Float = 1f   // resets externally when pane is paused
-
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#0D0D0D")
-        style = Paint.Style.FILL
-    }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#2A2A2A")
-        style = Paint.Style.FILL
-    }
-    private val readPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#42A5F5")
-        style = Paint.Style.FILL
-    }
-    private val writePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#EF5350")
-        style = Paint.Style.FILL
-    }
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#808080")
-        textSize = sp(8f)
-        textAlign = Paint.Align.RIGHT
-        typeface = android.graphics.Typeface.MONOSPACE
-    }
-    private val readLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#42A5F5")
-        textSize = sp(8f)
-        textAlign = Paint.Align.RIGHT
-        typeface = android.graphics.Typeface.MONOSPACE
-        isFakeBoldText = true
-    }
-    private val writeLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#EF5350")
-        textSize = sp(8f)
-        textAlign = Paint.Align.RIGHT
-        typeface = android.graphics.Typeface.MONOSPACE
-        isFakeBoldText = true
-    }
-    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#B0B0B0")
-        textSize = sp(8f)
-        textAlign = Paint.Align.LEFT
-        typeface = android.graphics.Typeface.MONOSPACE
-    }
-
-    fun update(readMBps: Float, writeMBps: Float) {
-        this.readMBps  = readMBps
-        this.writeMBps = writeMBps
-        maxSeen = maxOf(maxSeen, readMBps, writeMBps, 1f)
-        invalidate()
-    }
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(w, dp(72f).toInt())
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-
-        canvas.drawRoundRect(0f, 0f, w, height.toFloat(), dp(6f), dp(6f), bgPaint)
-
-        val pad     = dp(8f)
-        val barH    = dp(12f)
-        val lblW    = dp(36f)
-        val valW    = dp(40f)
-        val gap     = dp(8f)
-        val barLeft  = pad + lblW + dp(4f)
-        val barRight = w - pad - valW
-
-        fun drawRow(top: Float, label: String, mbps: Float, fillPaint: Paint, lp: Paint) {
-            val bot = top + barH
-            val r = barH / 2f
-            val fraction = (mbps / maxSeen).coerceIn(0f, 1f)
-
-            val textY = top + barH / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f
-            canvas.drawText(label, pad + lblW, textY, lp)
-
-            canvas.drawRoundRect(barLeft, top, barRight, bot, r, r, trackPaint)
-            if (fraction > 0f) {
-                val fillRight = barLeft + (barRight - barLeft) * fraction
-                canvas.drawRoundRect(barLeft, top, fillRight, bot, r, r, fillPaint)
-            }
-
-            val valText = if (mbps >= 1f) "%.1fMB/s".format(mbps) else "%.0fkB/s".format(mbps * 1024f)
-            canvas.drawText(valText, barRight + dp(4f), textY, valuePaint)
-        }
-
-        drawRow(pad,              "READ",  readMBps,  readPaint,  readLabelPaint)
-        drawRow(pad + barH + gap, "WRITE", writeMBps, writePaint, writeLabelPaint)
-    }
-
-    private fun dp(v: Float) = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
-    )
-
-    private fun sp(v: Float) = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics
-    )
-}
-
-// ---------------------------------------------------------------------------
 // NetworkIoView
 //
 // Two horizontal bars: RX (green) and TX (cyan).
@@ -707,6 +596,155 @@ class SignalView(context: Context) : View(context) {
         (Color.red(a)   + t * (Color.red(b)   - Color.red(a))).toInt(),
         (Color.green(a) + t * (Color.green(b) - Color.green(a))).toInt(),
         (Color.blue(a)  + t * (Color.blue(b)  - Color.blue(a))).toInt()
+    )
+
+    private fun dp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
+    )
+
+    private fun sp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics
+    )
+}
+
+// ---------------------------------------------------------------------------
+// BatteryView
+//
+// Two rows: TEMP (battery temperature in °C) and VOLT (battery voltage).
+// Data comes from the sticky ACTION_BATTERY_CHANGED broadcast — always
+// available, no permissions required.
+// TEMP bar range 0–60 °C; colour green (<35°) → amber (<45°) → red (≥45°).
+// VOLT bar range 3000–4500 mV; static amber fill; value shown as X.XXV.
+// Null values render as "N/A" in grey.
+// ---------------------------------------------------------------------------
+class BatteryView(context: Context) : View(context) {
+
+    private var tempC:  Float? = null
+    private var voltMv: Int?   = null
+
+    private val TEMP_MAX = 60f
+    private val VOLT_MIN = 3000f
+    private val VOLT_MAX = 4500f
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#0D0D0D")
+        style = Paint.Style.FILL
+    }
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2A2A2A")
+        style = Paint.Style.FILL
+    }
+    private val barFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#808080")
+        textSize = sp(8f)
+        textAlign = Paint.Align.RIGHT
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+    private val tempLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F57C00")
+        textSize = sp(8f)
+        textAlign = Paint.Align.RIGHT
+        typeface = android.graphics.Typeface.MONOSPACE
+        isFakeBoldText = true
+    }
+    private val voltLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFB300")
+        textSize = sp(8f)
+        textAlign = Paint.Align.RIGHT
+        typeface = android.graphics.Typeface.MONOSPACE
+        isFakeBoldText = true
+    }
+    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B0B0B0")
+        textSize = sp(8f)
+        textAlign = Paint.Align.LEFT
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+    private val naValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#505050")
+        textSize = sp(8f)
+        textAlign = Paint.Align.LEFT
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+
+    fun update(tempC: Float?, voltMv: Int?) {
+        this.tempC  = tempC
+        this.voltMv = voltMv
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        setMeasuredDimension(w, dp(72f).toInt())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        canvas.drawRoundRect(0f, 0f, w, height.toFloat(), dp(6f), dp(6f), bgPaint)
+
+        val pad      = dp(8f)
+        val barH     = dp(12f)
+        val lblW     = dp(36f)
+        val valW     = dp(52f)
+        val gap      = dp(8f)
+        val barLeft  = pad + lblW + dp(4f)
+        val barRight = w - pad - valW
+
+        fun tempColor(t: Float): Int {
+            val green = Color.parseColor("#66BB6A")
+            val amber = Color.parseColor("#F57C00")
+            val red   = Color.parseColor("#F44336")
+            return when {
+                t < 35f -> green
+                t < 45f -> lerpColor(green, amber, (t - 35f) / 10f)
+                t < 55f -> lerpColor(amber, red,   (t - 45f) / 10f)
+                else    -> red
+            }
+        }
+
+        val textYRow1 = pad + barH / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f
+        val textYRow2 = pad + barH + gap + barH / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f
+
+        // --- TEMP row ---
+        canvas.drawText("TEMP", pad + lblW, textYRow1, tempLabelPaint)
+        canvas.drawRoundRect(barLeft, pad, barRight, pad + barH, barH / 2f, barH / 2f, trackPaint)
+        if (tempC != null) {
+            val frac  = (tempC!! / TEMP_MAX).coerceIn(0f, 1f)
+            val color = tempColor(tempC!!)
+            if (frac > 0f) {
+                barFillPaint.color = color
+                canvas.drawRoundRect(barLeft, pad, barLeft + (barRight - barLeft) * frac, pad + barH, barH / 2f, barH / 2f, barFillPaint)
+            }
+            valuePaint.color = color
+            canvas.drawText("%.1f°C".format(tempC!!), barRight + dp(4f), textYRow1, valuePaint)
+        } else {
+            canvas.drawText("N/A", barRight + dp(4f), textYRow1, naValuePaint)
+        }
+
+        // --- VOLT row ---
+        val row2Top = pad + barH + gap
+        canvas.drawText("VOLT", pad + lblW, textYRow2, voltLabelPaint)
+        canvas.drawRoundRect(barLeft, row2Top, barRight, row2Top + barH, barH / 2f, barH / 2f, trackPaint)
+        if (voltMv != null) {
+            val frac = ((voltMv!! - VOLT_MIN) / (VOLT_MAX - VOLT_MIN)).coerceIn(0f, 1f)
+            if (frac > 0f) {
+                barFillPaint.color = Color.parseColor("#FFB300")
+                canvas.drawRoundRect(barLeft, row2Top, barLeft + (barRight - barLeft) * frac, row2Top + barH, barH / 2f, barH / 2f, barFillPaint)
+            }
+            valuePaint.color = Color.parseColor("#B0B0B0")
+            canvas.drawText("%.2fV".format(voltMv!! / 1000f), barRight + dp(4f), textYRow2, valuePaint)
+        } else {
+            canvas.drawText("N/A", barRight + dp(4f), textYRow2, naValuePaint)
+        }
+    }
+
+    private fun lerpColor(a: Int, b: Int, t: Float): Int = Color.rgb(
+        (Color.red(a)   + t * (Color.red(b)   - Color.red(a))).toInt().coerceIn(0, 255),
+        (Color.green(a) + t * (Color.green(b) - Color.green(a))).toInt().coerceIn(0, 255),
+        (Color.blue(a)  + t * (Color.blue(b)  - Color.blue(a))).toInt().coerceIn(0, 255)
     )
 
     private fun dp(v: Float) = TypedValue.applyDimension(
