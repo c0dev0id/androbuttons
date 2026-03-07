@@ -23,12 +23,15 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.TranslateAnimation
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
+import com.androbuttons.common.actionButtonBg
+import com.androbuttons.common.buttonBg
 import com.androbuttons.common.dpWith
 import com.androbuttons.panes.apps.AppsPane
 import com.androbuttons.panes.markers.MarkersPane
@@ -36,6 +39,7 @@ import com.androbuttons.panes.music.MusicPane
 import com.androbuttons.panes.pointers.PointersPane
 import com.androbuttons.panes.sensors.SensorsPane
 import com.androbuttons.panes.system.SystemPane
+import com.androbuttons.panes.widgets.WidgetPane
 
 class OverlayService : Service(), ServiceBridge {
 
@@ -57,6 +61,19 @@ class OverlayService : Service(), ServiceBridge {
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
         private const val SECONDARY_KEY_ENTER  = KeyEvent.KEYCODE_BUTTON_Y
         private const val SECONDARY_KEY_CANCEL = KeyEvent.KEYCODE_BUTTON_A
+
+        private const val KEY_PANE_ORDER    = "pane_order"
+        private const val KEY_WIDGET_NEXTID = "widget_next_id"
+        private const val DEFAULT_PANE_ORDER = "music,apps,sensors,markers,pointers,system"
+
+        private val FIXED_PANE_LABELS = mapOf(
+            "music"    to "Music",
+            "apps"     to "Apps",
+            "sensors"  to "Sensors",
+            "markers"  to "Markers",
+            "pointers" to "Pointers",
+            "system"   to "System"
+        )
 
         var isRunning = false
     }
@@ -80,6 +97,18 @@ class OverlayService : Service(), ServiceBridge {
     private var titleLeftZone:   LinearLayout?  = null
     private var titleRightZone:  LinearLayout?  = null
     private val paneDots = mutableListOf<View>()
+
+    // ---- Pane manager -------------------------------------------------------
+
+    private var rootContainer: LinearLayout? = null
+    private var inPaneManager = false
+    private var paneManagerView: View? = null
+    private val managerOrder = mutableListOf<String>()
+    private var managerSortingMode = false
+    private var managerSortDragIndex = -1
+    private val managerRowViews = mutableListOf<LinearLayout>()
+    private var managerRowScroll: ScrollView? = null
+    private var managerRowContainer: LinearLayout? = null
 
     // ---- Dimension helper ---------------------------------------------------
 
@@ -133,15 +162,8 @@ class OverlayService : Service(), ServiceBridge {
         isRunning = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // Instantiate panes once here; their views are built lazily in showOverlay()
-        panes = listOf(
-            MusicPane(bridge = this),
-            AppsPane(bridge = this),
-            SensorsPane(bridge = this),
-            MarkersPane(bridge = this),
-            PointersPane(bridge = this),
-            SystemPane(bridge = this)
-        )
+        // Instantiate panes from saved order; views are built lazily in showOverlay()
+        panes = buildPanes()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
     }
@@ -254,6 +276,7 @@ class OverlayService : Service(), ServiceBridge {
             elevation = 8.dp().toFloat()
             clipToOutline = true
         }
+        rootContainer = container
         container.addView(buildTitleBar())
         container.addView(buildFlipperView())
         container.isFocusable = true
@@ -316,6 +339,8 @@ class OverlayService : Service(), ServiceBridge {
             setPadding(0, 12.dp(), 0, 6.dp())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply { weight = 2f }
             addView(titleText)
+            isLongClickable = true
+            setOnLongClickListener { if (!inPaneManager) showPaneManager(); true }
         }
 
         titleRightZone = LinearLayout(this).apply {
@@ -346,6 +371,8 @@ class OverlayService : Service(), ServiceBridge {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             setPadding(0, 0, 0, 8.dp())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            isLongClickable = true
+            setOnLongClickListener { if (!inPaneManager) showPaneManager(); true }
         }
         for (i in panes.indices) {
             val dot = View(this).apply {
@@ -394,6 +421,301 @@ class OverlayService : Service(), ServiceBridge {
     }
 
     // =========================================================================
+    // Pane configuration
+    // =========================================================================
+
+    private fun buildPanes(): List<PaneContent> {
+        val raw = prefs.getString(KEY_PANE_ORDER, DEFAULT_PANE_ORDER) ?: DEFAULT_PANE_ORDER
+        val result = raw.split(",")
+            .filter { it.isNotBlank() && !it.startsWith("~") }
+            .mapNotNull { id ->
+                when (id) {
+                    "music"    -> MusicPane(bridge = this)
+                    "apps"     -> AppsPane(bridge = this)
+                    "sensors"  -> SensorsPane(bridge = this)
+                    "markers"  -> MarkersPane(bridge = this)
+                    "pointers" -> PointersPane(bridge = this)
+                    "system"   -> SystemPane(bridge = this)
+                    else       -> if (id.startsWith("widget_")) WidgetPane(this, id) else null
+                }
+            }
+        return result.ifEmpty {
+            listOf(MusicPane(this), AppsPane(this), SensorsPane(this), MarkersPane(this), PointersPane(this), SystemPane(this))
+        }
+    }
+
+    private fun applyNewPaneOrder(newOrder: List<String>) {
+        prefs.edit().putString(KEY_PANE_ORDER, newOrder.joinToString(",")).apply()
+        panes.forEach { it.onDestroy() }
+        panes = buildPanes()
+        currentPane = 0
+        inPaneManager = false
+        showOverlay()
+    }
+
+    // =========================================================================
+    // Pane manager
+    // =========================================================================
+
+    private fun showPaneManager() {
+        val raw = prefs.getString(KEY_PANE_ORDER, DEFAULT_PANE_ORDER) ?: DEFAULT_PANE_ORDER
+        managerOrder.clear()
+        managerOrder.addAll(raw.split(",").filter { it.isNotBlank() })
+        inPaneManager = true
+        if (panes.isNotEmpty()) panes[currentPane].onPaused()
+        viewFlipper.visibility = View.GONE
+        val mgr = buildPaneManagerView()
+        paneManagerView = mgr
+        rootContainer?.addView(mgr, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        titleText?.text = "Manage Panes"
+        titleLeftZone?.alpha = 0.4f
+        titleRightZone?.alpha = 0.4f
+    }
+
+    private fun exitPaneManager() {
+        rootContainer?.removeView(paneManagerView)
+        paneManagerView = null
+        viewFlipper.visibility = View.VISIBLE
+        inPaneManager = false
+        refreshTitleBar()
+        if (panes.isNotEmpty()) panes[currentPane].onResumed()
+    }
+
+    private fun buildPaneManagerView(): View {
+        managerRowViews.clear()
+
+        val rowContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
+        }
+        managerRowContainer = rowContainer
+
+        managerOrder.forEachIndexed { i, _ ->
+            val row = buildManagerRow(i)
+            managerRowViews.add(row)
+            rowContainer.addView(row)
+        }
+
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(rowContainer)
+        }
+        managerRowScroll = scroll
+
+        val addBtn = TextView(this).apply {
+            text = "➕  Add Widget Pane"
+            textSize = 15f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Theme.textSecondary)
+            background = actionButtonBg(Theme.inactiveBg, this@OverlayService)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 6.dp() }
+            setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
+            isClickable = true
+            setOnClickListener { addWidgetPane() }
+        }
+
+        val doneBtn = TextView(this).apply {
+            text = "Done"
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = actionButtonBg(Theme.primary, this@OverlayService)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 6.dp(); bottomMargin = 10.dp() }
+            setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+            isClickable = true
+            setOnClickListener { applyNewPaneOrder(managerOrder.toList()) }
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(scroll)
+            addView(addBtn)
+            addView(doneBtn)
+        }
+    }
+
+    private fun buildManagerRow(index: Int): LinearLayout {
+        val rawId = managerOrder[index]
+        val id = rawId.removePrefix("~")
+        val isWidget = id.startsWith("widget_")
+        val isEnabled = !rawId.startsWith("~")
+        val displayName = FIXED_PANE_LABELS[id]
+            ?: prefs.getString("${id}_title", "Widgets") ?: "Widgets"
+
+        val dragHandle = TextView(this).apply {
+            text = "≡"
+            textSize = 18f
+            setTextColor(Theme.textSecondary)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(32.dp(), LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { marginEnd = 10.dp() }
+        }
+
+        val nameLabel = TextView(this).apply {
+            text = displayName
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(if (isEnabled) Color.WHITE else Theme.textSecondary)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val actionView: TextView = if (isWidget) {
+            // ✕ remove button for widget panes
+            TextView(this).apply {
+                text = "✕"
+                textSize = 16f
+                setTextColor(Theme.primary)
+                gravity = Gravity.CENTER
+                val size = 32.dp()
+                layoutParams = LinearLayout.LayoutParams(size, size)
+                setOnClickListener { removeWidgetPane(managerRowViews.indexOf(parent as LinearLayout)) }
+            }
+        } else {
+            // Toggle checkbox for fixed panes
+            makeManagerCheckbox(isEnabled)
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 4.dp() }
+            background = buttonBg(false, this@OverlayService)
+            addView(dragHandle)
+            addView(nameLabel)
+            addView(actionView)
+        }
+
+        // Drag-to-reorder + single-tap toggle gesture (mirrors AppsPane exactly)
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (!isWidget) toggleFixedPane(managerRowViews.indexOf(row), actionView, nameLabel)
+                return true
+            }
+            override fun onLongPress(e: MotionEvent) {
+                managerSortingMode = true
+                managerSortDragIndex = managerRowViews.indexOf(row)
+                row.background = buttonBg(true, this@OverlayService)
+                managerRowScroll?.requestDisallowInterceptTouchEvent(true)
+            }
+        })
+
+        row.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN   -> { v.drawableHotspotChanged(event.x, event.y); v.isPressed = true }
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> v.isPressed = false
+            }
+            val handled = gestureDetector.onTouchEvent(event)
+            val rowIdx = managerRowViews.indexOf(row)
+            if (managerSortingMode && managerSortDragIndex == rowIdx) {
+                when (event.action) {
+                    MotionEvent.ACTION_MOVE -> {
+                        val newIdx = getManagerIndexAtY(event.rawY)
+                        if (newIdx != managerSortDragIndex) {
+                            swapManagerRows(managerSortDragIndex, newIdx)
+                            managerSortDragIndex = newIdx
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        managerSortingMode = false
+                        managerSortDragIndex = -1
+                        managerRowScroll?.requestDisallowInterceptTouchEvent(false)
+                        // Restore non-focused background
+                        row.background = buttonBg(false, this@OverlayService)
+                    }
+                }
+                true
+            } else handled
+        }
+
+        return row
+    }
+
+    private fun makeManagerCheckbox(checked: Boolean) = TextView(this).apply {
+        val size = 26.dp()
+        layoutParams = LinearLayout.LayoutParams(size, size)
+        gravity = Gravity.CENTER
+        text = if (checked) "✓" else ""
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        setTypeface(null, android.graphics.Typeface.BOLD)
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 4.dp().toFloat()
+            if (checked) setColor(Theme.primary)
+            else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
+        }
+    }
+
+    private fun toggleFixedPane(rowIndex: Int, checkbox: TextView, label: TextView) {
+        val current = managerOrder[rowIndex]
+        val wasDisabled = current.startsWith("~")
+        managerOrder[rowIndex] = if (wasDisabled) current.removePrefix("~") else "~$current"
+        val nowEnabled = wasDisabled
+        // Update checkbox appearance
+        checkbox.text = if (nowEnabled) "✓" else ""
+        checkbox.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 4.dp().toFloat()
+            if (nowEnabled) setColor(Theme.primary)
+            else { setColor(Color.TRANSPARENT); setStroke(2.dp(), Theme.textSecondary) }
+        }
+        label.setTextColor(if (nowEnabled) Color.WHITE else Theme.textSecondary)
+    }
+
+    private fun removeWidgetPane(rowIndex: Int) {
+        if (rowIndex < 0 || rowIndex >= managerOrder.size) return
+        val paneId = managerOrder.removeAt(rowIndex)
+        val row = managerRowViews.removeAt(rowIndex)
+        managerRowContainer?.removeView(row)
+        prefs.edit().remove("${paneId}_title").remove("${paneId}_widgets").apply()
+    }
+
+    private fun addWidgetPane() {
+        val nextId = prefs.getInt(KEY_WIDGET_NEXTID, 0)
+        prefs.edit().putInt(KEY_WIDGET_NEXTID, nextId + 1).apply()
+        val paneId = "widget_$nextId"
+        managerOrder.add(paneId)
+        val row = buildManagerRow(managerOrder.size - 1)
+        managerRowViews.add(row)
+        managerRowContainer?.addView(row)
+        // Scroll to bottom so the new pane is visible
+        managerRowScroll?.post { managerRowScroll?.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun getManagerIndexAtY(rawY: Float): Int {
+        val loc = IntArray(2)
+        for (i in managerRowViews.indices) {
+            managerRowViews[i].getLocationOnScreen(loc)
+            if (rawY < loc[1] + managerRowViews[i].height) return i
+        }
+        return (managerRowViews.size - 1).coerceAtLeast(0)
+    }
+
+    private fun swapManagerRows(from: Int, to: Int) {
+        managerOrder.add(to, managerOrder.removeAt(from))
+        managerRowViews.add(to, managerRowViews.removeAt(from))
+        val container = managerRowContainer ?: return
+        container.removeAllViews()
+        managerRowViews.forEach { container.addView(it) }
+    }
+
+    // =========================================================================
     // Navigation
     // =========================================================================
 
@@ -409,12 +731,20 @@ class OverlayService : Service(), ServiceBridge {
     }
 
     private fun handleKey(keyCode: Int): Boolean {
+        val cancelKey = prefs.getInt(KEY_CANCEL, DEFAULT_KEY_CANCEL)
+
+        // While pane manager is open, only cancel key is handled (to exit manager)
+        if (inPaneManager) {
+            return if (keyCode == cancelKey || keyCode == SECONDARY_KEY_CANCEL) {
+                exitPaneManager(); true
+            } else false
+        }
+
         val rightKey  = prefs.getInt(KEY_RIGHT,  DEFAULT_KEY_RIGHT)
         val leftKey   = prefs.getInt(KEY_LEFT,   DEFAULT_KEY_LEFT)
         val upKey     = prefs.getInt(KEY_UP,     DEFAULT_KEY_UP)
         val downKey   = prefs.getInt(KEY_DOWN,   DEFAULT_KEY_DOWN)
         val enterKey  = prefs.getInt(KEY_ENTER,  DEFAULT_KEY_ENTER)
-        val cancelKey = prefs.getInt(KEY_CANCEL, DEFAULT_KEY_CANCEL)
 
         val pane = panes[currentPane]
 
