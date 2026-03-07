@@ -1,5 +1,6 @@
 package com.androbuttons.panes.sensors
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -352,6 +353,7 @@ class SensorsPane(private val bridge: ServiceBridge) : PaneContent {
             gpsInfoView?.update(gpsSatellites, gpsAccuracyM, gpsUpdateRateHz)
         }
 
+        @SuppressLint("MissingPermission")
         fun start() {
             sensorMgr.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
                 sensorMgr.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)

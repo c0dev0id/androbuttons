@@ -1,5 +1,6 @@
 package com.androbuttons.panes.pointers
 
+import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
@@ -633,6 +634,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             }
         }
 
+        @SuppressLint("MissingPermission")
         fun start() {
             sensorMgr.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
                 sensorMgr.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)
