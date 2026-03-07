@@ -14,7 +14,6 @@ import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -43,7 +42,9 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     private val prefs: SharedPreferences =
         bridge.context.getSharedPreferences("androbuttons_prefs", Context.MODE_PRIVATE)
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "${paneId}_appwidget_ids" && !inConfigureView) showWidgetView()
+        if (key == "${paneId}_appwidget_ids") {
+            if (inConfigureView) showConfigureView() else showWidgetView()
+        }
     }
 
     // Tracks which widget slot (by index into the stored ID list) has focus.
@@ -75,9 +76,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
     }
 
     override fun onResumed() {
-        // Rebuild the widget view in case the user just added a widget via
-        // WidgetPickerActivity while this pane was in the background.
-        if (!inConfigureView) showWidgetView()
+        if (inConfigureView) showConfigureView() else showWidgetView()
     }
 
     override fun onPaused() { /* AppWidgetHost lifecycle is handled by OverlayService */ }
@@ -139,10 +138,10 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         bridge.appWidgetHost.deleteAppWidgetId(removedId)
         widgetViewCache.remove(removedId)
         focusIndex = if (ids.isEmpty()) -1 else index.coerceAtMost(ids.size - 1)
-        saveWidgetIds(ids) // prefListener fires synchronously → showWidgetView() with correct focusIndex
+        saveWidgetIds(ids) // prefListener fires → rebuilds view
     }
 
-    // ---- Widget view --------------------------------------------------------
+    // ---- Widget view (normal mode) ------------------------------------------
 
     private fun showWidgetView() {
         inConfigureView = false
@@ -160,7 +159,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
 
         if (ids.isEmpty()) {
             inner.addView(TextView(ctx).apply {
-                text = "No widgets added.\nTap ➕ to add an Android widget."
+                text = "No widgets added.\nUse Configure to add widgets."
                 textSize = 13f
                 setTextColor(Theme.textSecondary)
                 gravity = Gravity.CENTER
@@ -188,8 +187,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
 
         this.scrollView = scrollView
         pane.addView(scrollView)
-        pane.addView(addWidgetButton())
-        pane.addView(configureButton())
+        pane.addView(configureToggleButton())
     }
 
     private fun buildWidgetSlot(
@@ -207,25 +205,6 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             background = focusBorder(isFocused)
             setPadding(2.dp(), 2.dp(), 2.dp(), 2.dp())
         }
-
-        // Remove button row (always visible, top-right of each slot)
-        val headerRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        headerRow.addView(TextView(ctx).apply {
-            text = "✕ Remove"
-            textSize = 11f
-            setTextColor(Theme.primary)
-            setPadding(6.dp(), 2.dp(), 4.dp(), 2.dp())
-            isClickable = true
-            setOnClickListener { removeWidgetAtIndex(index) }
-        })
-        wrapper.addView(headerRow)
 
         if (info != null) {
             val hostView = widgetViewCache.getOrPut(appWidgetId) {
@@ -257,6 +236,148 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             })
         }
         return wrapper
+    }
+
+    // ---- Configure view (placeholder mode) ----------------------------------
+
+    private fun showConfigureView() {
+        inConfigureView = true
+        val pane = paneRoot ?: return
+        pane.removeAllViews()
+        slotWrappers.clear()
+
+        val ids = loadWidgetIds()
+        val manager = AppWidgetManager.getInstance(ctx)
+
+        val inner = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+        }
+
+        // Placeholder card for each existing widget
+        ids.forEachIndexed { i, appWidgetId ->
+            val info = manager.getAppWidgetInfo(appWidgetId)
+            inner.addView(buildPlaceholderCard(i, appWidgetId, info))
+        }
+
+        // "Add" placeholder card
+        inner.addView(buildAddCard())
+
+        val scrollView = ScrollView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            isClickable = true
+            setOnTouchListener(bridge.makePaneSwipeListener())
+            addView(inner)
+        }
+        this.scrollView = scrollView
+
+        pane.addView(scrollView)
+        pane.addView(configureToggleButton())
+    }
+
+    private fun buildPlaceholderCard(
+        index: Int,
+        appWidgetId: Int,
+        info: AppWidgetProviderInfo?
+    ): LinearLayout {
+        val label = if (info != null) {
+            info.loadLabel(ctx.packageManager) ?: "Widget"
+        } else {
+            "Widget unavailable"
+        }
+
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(Theme.inactiveBg)
+            }
+            setPadding(14.dp(), 16.dp(), 10.dp(), 16.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+
+            // Widget name
+            addView(TextView(ctx).apply {
+                text = label
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+
+            // Remove button
+            addView(TextView(ctx).apply {
+                text = "Remove"
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Theme.primary)
+                setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
+                isClickable = true
+                setOnClickListener { removeWidgetAtIndex(index) }
+            })
+        }
+    }
+
+    private fun buildAddCard(): LinearLayout {
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8.dp().toFloat()
+                setColor(Theme.inactiveBg)
+            }
+            setPadding(14.dp(), 16.dp(), 14.dp(), 16.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.dp() }
+
+            addView(TextView(ctx).apply {
+                text = "Add"
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                background = actionButtonBg(Theme.primary, ctx)
+                setPadding(24.dp(), 10.dp(), 24.dp(), 10.dp())
+                isClickable = true
+                setOnClickListener {
+                    val intent = Intent(ctx, WidgetPickerActivity::class.java).apply {
+                        putExtra(WidgetPickerActivity.EXTRA_PANE_ID, paneId)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    ctx.startActivity(intent)
+                }
+            })
+        }
+    }
+
+    // ---- UI helpers ---------------------------------------------------------
+
+    private fun configureToggleButton() = TextView(ctx).apply {
+        text = "Configure"
+        textSize = 16f
+        setTypeface(null, Typeface.BOLD)
+        gravity = Gravity.CENTER
+        setTextColor(if (inConfigureView) Color.WHITE else Theme.textSecondary)
+        background = actionButtonBg(
+            if (inConfigureView) Theme.primary else Theme.inactiveBg, ctx
+        )
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 8.dp(); leftMargin = 10.dp(); rightMargin = 10.dp(); bottomMargin = 10.dp() }
+        setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
+        isClickable = true
+        setOnClickListener {
+            if (inConfigureView) showWidgetView() else showConfigureView()
+        }
     }
 
     /** Converts widget's declared size to pixels, with a sensible minimum. */
@@ -292,94 +413,6 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         val wrapper = slotWrappers.getOrNull(focusIndex) ?: return
         val sv = scrollView ?: return
         sv.post { sv.smoothScrollTo(0, wrapper.top) }
-    }
-
-    // ---- Configure view (title only) ----------------------------------------
-
-    private fun showConfigureView() {
-        inConfigureView = true
-        val pane = paneRoot ?: return
-        pane.removeAllViews()
-        slotWrappers.clear()
-
-        val titleEdit = EditText(ctx).apply {
-            setText(bridge.getStringPref("${paneId}_title", "Widgets"))
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            setHintTextColor(Theme.textSecondary)
-            hint = "Pane title"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8.dp().toFloat()
-                setColor(Theme.inactiveBg)
-            }
-            setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 10.dp(); leftMargin = 10.dp()
-                rightMargin = 10.dp(); bottomMargin = 6.dp()
-            }
-            setTypeface(null, Typeface.BOLD)
-        }
-
-        pane.addView(titleEdit)
-        pane.addView(saveButton {
-            val newTitle = titleEdit.text.toString().trim().ifBlank { "Widgets" }
-            bridge.putStringPref("${paneId}_title", newTitle)
-            showWidgetView()
-        })
-    }
-
-    // ---- UI helpers ---------------------------------------------------------
-
-    private fun addWidgetButton() = TextView(ctx).apply {
-        text = "➕  Add Widget"
-        textSize = 15f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
-        background = actionButtonBg(Theme.primary, ctx)
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 8.dp(); bottomMargin = 4.dp() }
-        setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
-        isClickable = true
-        setOnClickListener {
-            val intent = Intent(ctx, WidgetPickerActivity::class.java).apply {
-                putExtra(WidgetPickerActivity.EXTRA_PANE_ID, paneId)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            ctx.startActivity(intent)
-        }
-    }
-
-    private fun configureButton() = TextView(ctx).apply {
-        text = "Rename Pane"
-        textSize = 14f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-        setTextColor(Theme.textSecondary)
-        background = actionButtonBg(Theme.inactiveBg, ctx)
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 0.dp(); bottomMargin = 10.dp() }
-        setPadding(12.dp(), 14.dp(), 12.dp(), 14.dp())
-        isClickable = true
-        setOnClickListener { showConfigureView() }
-    }
-
-    private fun saveButton(onSave: () -> Unit) = TextView(ctx).apply {
-        text = "Save"
-        textSize = 16f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
-        background = actionButtonBg(Theme.primary, ctx)
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = 8.dp(); leftMargin = 10.dp(); rightMargin = 10.dp(); bottomMargin = 10.dp() }
-        setPadding(12.dp(), 18.dp(), 12.dp(), 18.dp())
-        isClickable = true
-        setOnClickListener { onSave() }
     }
 
     // ---- Prefs helpers ------------------------------------------------------
