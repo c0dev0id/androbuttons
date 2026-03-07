@@ -1,5 +1,9 @@
 package com.androbuttons.panes.system
 
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.net.TrafficStats
 import android.graphics.Color
@@ -19,6 +23,7 @@ import android.widget.TextView
 import android.content.Intent
 import android.content.IntentFilter
 import com.androbuttons.BatteryView
+import com.androbuttons.BluetoothDevicesView
 import com.androbuttons.LoadHistogramView
 import com.androbuttons.DiskSpaceView
 import com.androbuttons.MemoryBarView
@@ -29,6 +34,7 @@ import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.dpWith
 import java.io.BufferedReader
 import java.io.FileReader
+import java.util.Collections
 
 class SystemPane(private val bridge: ServiceBridge) : PaneContent {
 
@@ -37,12 +43,16 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     private val ctx: Context get() = bridge.context
     private fun Int.dp() = dpWith(ctx)
 
-    private var loadHistogramView: LoadHistogramView? = null
-    private var memoryBarView:  MemoryBarView?  = null
-    private var diskSpaceView:  DiskSpaceView?  = null
-    private var batteryView:    BatteryView?    = null
-    private var networkIoView:  NetworkIoView?  = null
-    private var signalView:     SignalView?      = null
+    private var loadHistogramView:    LoadHistogramView?    = null
+    private var memoryBarView:        MemoryBarView?        = null
+    private var diskSpaceView:        DiskSpaceView?        = null
+    private var batteryView:          BatteryView?          = null
+    private var networkIoView:        NetworkIoView?        = null
+    private var signalView:           SignalView?           = null
+    private var bluetoothDevicesView: BluetoothDevicesView? = null
+
+    private val connectedAddresses: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+    private var bluetoothReceiver: BroadcastReceiver? = null
 
     private var monitor: SystemMonitor? = null
 
@@ -102,6 +112,9 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         // --- Signal ---
         signalView    = addSection("SIGNAL",     SignalView(ctx))
 
+        // --- Bluetooth ---
+        bluetoothDevicesView = addSection("BLUETOOTH", BluetoothDevicesView(ctx))
+
         startMonitor()
 
         return ScrollView(ctx).apply {
@@ -115,17 +128,22 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         }
     }
 
-    override fun onResumed() = startMonitor()
+    override fun onResumed() {
+        startMonitor()
+        registerBluetoothReceiver()
+    }
 
     override fun onPaused() {
         monitor?.stop()
         monitor = null
         networkIoView?.maxSeen = 1f
+        unregisterBluetoothReceiver()
     }
 
     override fun onDestroy() {
         monitor?.stop()
         monitor = null
+        unregisterBluetoothReceiver()
     }
 
     // -------------------------------------------------------------------------
@@ -136,6 +154,43 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         if (monitor == null) {
             monitor = SystemMonitor().also { it.start() }
         }
+    }
+
+    private fun registerBluetoothReceiver() {
+        if (bluetoothReceiver != null) return
+        // Seed initial connected set from currently connected GATT devices
+        try {
+            val bm = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            bm?.getConnectedDevices(BluetoothProfile.GATT)?.forEach { device ->
+                connectedAddresses.add(device.address)
+            }
+        } catch (_: Exception) {}
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                @Suppress("DEPRECATION")
+                val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                    ?: return
+                when (intent.action) {
+                    BluetoothDevice.ACTION_ACL_CONNECTED    -> connectedAddresses.add(device.address)
+                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> connectedAddresses.remove(device.address)
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        ctx.registerReceiver(receiver, filter)
+        bluetoothReceiver = receiver
+    }
+
+    private fun unregisterBluetoothReceiver() {
+        bluetoothReceiver?.let {
+            try { ctx.unregisterReceiver(it) } catch (_: Exception) {}
+            bluetoothReceiver = null
+        }
+        connectedAddresses.clear()
     }
 
     // -------------------------------------------------------------------------
@@ -160,6 +215,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                     val battResult    = readBattery()
                     val netResult     = readNetworkIO()
                     val signalResult  = readSignalStrengths()
+                    val btResult      = readBluetoothDevices()
 
                     handler.post {
                         loadResult?.let { load ->
@@ -178,6 +234,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                         }
                         val (wifiRssi, mobileDbm) = signalResult
                         signalView?.update(wifiRssi, mobileDbm)
+                        bluetoothDevicesView?.update(btResult)
                     }
                 }.start()
 
@@ -317,6 +374,32 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
             } catch (_: SecurityException) { null } catch (_: Exception) { null }
 
             return Pair(wifiRssi, mobileDbm)
+        }
+
+        // ---------------------------------------------------------------------
+        // BluetoothManager → list of (name, isConnected) for bonded devices
+        //
+        // Returns null if BLUETOOTH_CONNECT permission is denied (API 31+).
+        // Returns empty list if Bluetooth is disabled or no bonded devices.
+        // Connected state is maintained by the ACL BroadcastReceiver in the
+        // outer SystemPane class via connectedAddresses.
+        // ---------------------------------------------------------------------
+        private fun readBluetoothDevices(): List<Pair<String, Boolean>>? {
+            return try {
+                val bm = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+                val adapter = bm?.adapter ?: return emptyList()
+                if (!adapter.isEnabled) return emptyList()
+                adapter.bondedDevices
+                    .map { device ->
+                        val name = try {
+                            device.name?.takeIf { it.isNotBlank() } ?: device.address
+                        } catch (_: SecurityException) { device.address }
+                        val connected = connectedAddresses.contains(device.address)
+                        Pair(name, connected)
+                    }
+                    .sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first })
+            } catch (_: SecurityException) { null }
+              catch (_: Exception) { emptyList() }
         }
     }
 }

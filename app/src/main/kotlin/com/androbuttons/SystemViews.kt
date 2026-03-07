@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.util.TypedValue
 import android.view.View
+import kotlin.math.ceil
 
 // ---------------------------------------------------------------------------
 // LoadHistogramView
@@ -757,6 +758,117 @@ class BatteryView(context: Context) : View(context) {
         (Color.green(a) + t * (Color.green(b) - Color.green(a))).toInt().coerceIn(0, 255),
         (Color.blue(a)  + t * (Color.blue(b)  - Color.blue(a))).toInt().coerceIn(0, 255)
     )
+
+    private fun dp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
+    )
+
+    private fun sp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics
+    )
+}
+
+// ---------------------------------------------------------------------------
+// BluetoothDevicesView
+//
+// Two-column list of all bonded (paired) Bluetooth devices.
+// Each item shows a coloured dot: green (#66BB6A) if currently connected,
+// red (#F44336) if paired but not connected.
+// Sorted: connected first, then alphabetically within each group.
+// Null device list (BLUETOOTH_CONNECT permission denied) → "NO PERMISSION".
+// Empty list (BT off or no bonded devices)              → "NO DEVICES".
+// Height is dynamic: 8dp top + 8dp bottom + ceil(n/2) × 18dp, min 32dp.
+// ---------------------------------------------------------------------------
+class BluetoothDevicesView(context: Context) : View(context) {
+
+    // null = permission denied, empty = no devices / BT off
+    private var devices: List<Pair<String, Boolean>>? = emptyList()
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#0D0D0D")
+        style = Paint.Style.FILL
+    }
+    private val dotConnectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#66BB6A")
+        style = Paint.Style.FILL
+    }
+    private val dotDisconnectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F44336")
+        style = Paint.Style.FILL
+    }
+    private val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#C0C0C0")
+        textSize = sp(9f)
+        textAlign = Paint.Align.LEFT
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+    private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#505050")
+        textSize = sp(9f)
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.MONOSPACE
+    }
+
+    fun update(devices: List<Pair<String, Boolean>>?) {
+        this.devices = devices
+        requestLayout()
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        val n = devices?.size ?: 0
+        val rows = if (n == 0) 1 else ceil(n / 2.0).toInt()
+        val h = (dp(8f) * 2 + rows * dp(18f)).toInt().coerceAtLeast(dp(32f).toInt())
+        setMeasuredDimension(w, h)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+
+        canvas.drawRoundRect(0f, 0f, w, h, dp(6f), dp(6f), bgPaint)
+
+        val devList = devices
+        if (devList == null) {
+            canvas.drawText("NO PERMISSION", w / 2f,
+                h / 2f - (emptyPaint.descent() + emptyPaint.ascent()) / 2f, emptyPaint)
+            return
+        }
+        if (devList.isEmpty()) {
+            canvas.drawText("NO DEVICES", w / 2f,
+                h / 2f - (emptyPaint.descent() + emptyPaint.ascent()) / 2f, emptyPaint)
+            return
+        }
+
+        val pad      = dp(8f)
+        val colW     = (w - pad * 2f) / 2f
+        val rowH     = dp(18f)
+        val dotR     = dp(3f)
+        val textOffX = dotR * 2f + dp(4f)
+        val textCY   = rowH / 2f - (namePaint.descent() + namePaint.ascent()) / 2f
+
+        devList.forEachIndexed { idx, (name, connected) ->
+            val col  = idx % 2
+            val row  = idx / 2
+            val colX = pad + col * colW
+            val rowY = pad + row * rowH
+
+            val dotPaint = if (connected) dotConnectedPaint else dotDisconnectedPaint
+            canvas.drawCircle(colX + dotR, rowY + rowH / 2f, dotR, dotPaint)
+
+            val maxTextW  = colW - textOffX - pad / 2f
+            val truncated = truncateToWidth(name, maxTextW)
+            canvas.drawText(truncated, colX + textOffX, rowY + textCY, namePaint)
+        }
+    }
+
+    private fun truncateToWidth(text: String, maxW: Float): String {
+        if (namePaint.measureText(text) <= maxW) return text
+        var end = text.length
+        while (end > 0 && namePaint.measureText(text.substring(0, end) + "…") > maxW) end--
+        return if (end > 0) text.substring(0, end) + "…" else "…"
+    }
 
     private fun dp(v: Float) = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics
