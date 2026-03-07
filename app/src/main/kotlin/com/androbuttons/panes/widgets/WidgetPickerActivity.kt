@@ -38,6 +38,10 @@ class WidgetPickerActivity : AppCompatActivity() {
     private lateinit var paneId: String
     private lateinit var prefs: SharedPreferences
     private var pendingAppWidgetId = -1
+    // Guard against saveAndFinish() / releaseAndFinish() being invoked more than once
+    // (can happen on some ROMs when a stale REQUEST_BIND result arrives after the
+    // configure-activity result has already been processed).
+    private var pendingHandled = false
 
     private fun Int.dp() = dpWith(this@WidgetPickerActivity)
 
@@ -47,6 +51,7 @@ class WidgetPickerActivity : AppCompatActivity() {
         paneId = intent.getStringExtra(EXTRA_PANE_ID) ?: run { finish(); return }
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         pendingAppWidgetId = savedInstanceState?.getInt("pendingAppWidgetId", -1) ?: -1
+        pendingHandled = savedInstanceState?.getBoolean("pendingHandled", false) ?: false
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -233,6 +238,7 @@ class WidgetPickerActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putInt("pendingAppWidgetId", pendingAppWidgetId)
+        outState.putBoolean("pendingHandled", pendingHandled)
     }
 
     private fun onBound(info: AppWidgetProviderInfo) {
@@ -259,15 +265,22 @@ class WidgetPickerActivity : AppCompatActivity() {
     }
 
     private fun saveAndFinish() {
+        if (pendingHandled) return
+        pendingHandled = true
         val current = prefs.getString("${paneId}_appwidget_ids", null)
-        val newList = if (current.isNullOrBlank()) "$pendingAppWidgetId"
-                      else "$current,$pendingAppWidgetId"
-        prefs.edit().putString("${paneId}_appwidget_ids", newList).apply()
+        val existing = current?.split(",")?.mapNotNull { it.trim().toIntOrNull() } ?: emptyList()
+        if (pendingAppWidgetId !in existing) {
+            val newList = if (existing.isEmpty()) "$pendingAppWidgetId"
+                          else "$current,$pendingAppWidgetId"
+            prefs.edit().putString("${paneId}_appwidget_ids", newList).apply()
+        }
         setResult(RESULT_OK)
         finish()
     }
 
     private fun releaseAndFinish() {
+        if (pendingHandled) return
+        pendingHandled = true
         if (pendingAppWidgetId != -1) {
             AppWidgetHostManager.getHost(this).deleteAppWidgetId(pendingAppWidgetId)
             pendingAppWidgetId = -1
