@@ -256,8 +256,6 @@ class OverlayService : Service(), ServiceBridge {
             gravity = Gravity.END or Gravity.TOP
             x = 0
             y = visibleStatusBarHeight
-            @Suppress("DEPRECATION")
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
