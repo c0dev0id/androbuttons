@@ -16,7 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
-import com.androbuttons.CpuCoresView
+import com.androbuttons.LoadHistogramView
 import com.androbuttons.DiskIoView
 import com.androbuttons.DiskSpaceView
 import com.androbuttons.MemoryBarView
@@ -35,7 +35,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
     private val ctx: Context get() = bridge.context
     private fun Int.dp() = dpWith(ctx)
 
-    private var cpuCoresView:   CpuCoresView?   = null
+    private var loadHistogramView: LoadHistogramView? = null
     private var memoryBarView:  MemoryBarView?  = null
     private var diskSpaceView:  DiskSpaceView?  = null
     private var diskIoView:     DiskIoView?     = null
@@ -82,8 +82,8 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
             return view
         }
 
-        // --- CPU ---
-        cpuCoresView  = addSection("CPU",        CpuCoresView(ctx))
+        // --- Load ---
+        loadHistogramView = addSection("LOAD", LoadHistogramView(ctx))
 
         // --- Memory ---
         memoryBarView = addSection("MEMORY",     MemoryBarView(ctx))
@@ -145,9 +145,6 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
 
         private val handler = Handler(Looper.getMainLooper())
 
-        // CPU: previous snapshot per core
-        private var prevCpuStats: Array<LongArray>? = null
-
         // Disk I/O state
         private var prevDiskRead:   Long   = 0L
         private var prevDiskWrite:  Long   = 0L
@@ -162,7 +159,7 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         private val poller = object : Runnable {
             override fun run() {
                 Thread {
-                    val cpuResult     = readCpuUsages()
+                    val loadResult    = readLoadAvg()
                     val memResult     = readMemInfo()
                     val diskSpResult  = readDiskSpace()
                     val diskIoResult  = readDiskIO()
@@ -170,9 +167,8 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
                     val signalResult  = readSignalStrengths()
 
                     handler.post {
-                        cpuResult?.let { usages ->
-                            cpuCoresView?.update(usages)
-                            cpuCoresView?.requestLayout()
+                        loadResult?.let { load ->
+                            loadHistogramView?.update(load)
                         }
                         memResult?.let { (used, cached, total) ->
                             memoryBarView?.update(used, cached, total)
@@ -199,31 +195,17 @@ class SystemPane(private val bridge: ServiceBridge) : PaneContent {
         fun stop()  { handler.removeCallbacks(poller) }
 
         // ---------------------------------------------------------------------
-        // /proc/stat  →  per-core usage fractions
+        // /proc/loadavg  →  1-minute load average
+        //
+        // Format: "0.15 0.20 0.10 1/246 12345"
+        // Field 0 is the 1-minute load average. This file is readable on all
+        // Android versions including Android 10+ (unlike /proc/stat).
         // ---------------------------------------------------------------------
-        private fun readCpuUsages(): FloatArray? {
+        private fun readLoadAvg(): Float? {
             return try {
-                val lines = BufferedReader(FileReader("/proc/stat")).use { it.readLines() }
-                val coreLines = lines.filter { it.matches(Regex("cpu\\d+.*")) }
-                if (coreLines.isEmpty()) return null
-
-                val currentStats = Array(coreLines.size) { i ->
-                    val parts = coreLines[i].trim().split(Regex("\\s+")).drop(1).map { it.toLongOrNull() ?: 0L }
-                    LongArray(8) { j -> parts.getOrElse(j) { 0L } }
-                }
-
-                val prev = prevCpuStats
-                prevCpuStats = currentStats
-                if (prev == null || prev.size != currentStats.size) return null
-
-                FloatArray(currentStats.size) { i ->
-                    val cur = currentStats[i]; val prv = prev[i]
-                    val idleCur  = cur[3] + cur[4]
-                    val idlePrev = prv[3] + prv[4]
-                    val dTotal   = cur.sum() - prv.sum()
-                    val dIdle    = idleCur - idlePrev
-                    if (dTotal <= 0L) 0f else (1f - dIdle.toFloat() / dTotal).coerceIn(0f, 1f)
-                }
+                val line = BufferedReader(FileReader("/proc/loadavg")).use { it.readLine() }
+                    ?: return null
+                line.trim().split(Regex("\\s+")).getOrNull(0)?.toFloatOrNull()
             } catch (_: Exception) { null }
         }
 
