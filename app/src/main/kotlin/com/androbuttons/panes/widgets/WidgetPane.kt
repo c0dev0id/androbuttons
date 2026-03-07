@@ -137,6 +137,7 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
         val removedId = ids.removeAt(index)
         bridge.appWidgetHost.deleteAppWidgetId(removedId)
         widgetViewCache.remove(removedId)
+        bridge.putIntPref("${paneId}_${removedId}_height", 0)
         focusIndex = if (ids.isEmpty()) -1 else index.coerceAtMost(ids.size - 1)
         saveWidgetIds(ids) // prefListener fires → rebuilds view
     }
@@ -220,9 +221,11 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             }
             // Detach from previous parent wrapper before adding to the new one
             (hostView.parent as? ViewGroup)?.removeView(hostView)
+            val storedDp = bridge.getIntPref("${paneId}_${appWidgetId}_height", 0)
+            val heightPx = if (storedDp > 0) storedDp.dp() else resolveWidgetHeight(info)
             hostView.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                resolveWidgetHeight(info)
+                heightPx
             )
             wrapper.addView(hostView)
         } else {
@@ -287,6 +290,12 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
             "Widget unavailable"
         }
 
+        val defaultDp = if (info != null) {
+            (resolveWidgetHeight(info) / ctx.resources.displayMetrics.density).toInt()
+        } else 120
+        val currentDp = bridge.getIntPref("${paneId}_${appWidgetId}_height", 0)
+            .takeIf { it > 0 } ?: defaultDp
+
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -308,6 +317,44 @@ class WidgetPane(private val bridge: ServiceBridge, private val paneId: String) 
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+
+            // − button
+            addView(TextView(ctx).apply {
+                text = "−"
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Theme.primary)
+                setPadding(10.dp(), 6.dp(), 6.dp(), 6.dp())
+                isClickable = true
+                setOnClickListener {
+                    val newDp = (currentDp - 72).coerceAtLeast(100)
+                    bridge.putIntPref("${paneId}_${appWidgetId}_height", newDp)
+                    showConfigureView()
+                }
+            })
+
+            // Current height label
+            addView(TextView(ctx).apply {
+                text = "${currentDp}dp"
+                textSize = 11f
+                setTextColor(Theme.textSecondary)
+                setPadding(4.dp(), 6.dp(), 4.dp(), 6.dp())
+                gravity = Gravity.CENTER
+            })
+
+            // + button
+            addView(TextView(ctx).apply {
+                text = "+"
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Theme.primary)
+                setPadding(6.dp(), 6.dp(), 10.dp(), 6.dp())
+                isClickable = true
+                setOnClickListener {
+                    bridge.putIntPref("${paneId}_${appWidgetId}_height", currentDp + 72)
+                    showConfigureView()
+                }
             })
 
             // Remove button
