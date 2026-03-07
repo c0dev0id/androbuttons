@@ -222,7 +222,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                 textSize = 12f
                 setTextColor(Color.WHITE)
                 setHintTextColor(Theme.textSecondary)
-                hint = "lon,lat"
+                hint = "lat,lon"
                 inputType = InputType.TYPE_CLASS_TEXT
                 background = null
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f)
@@ -290,7 +290,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             })
         }
 
-        pois.forEach { addPoiRow(it.name, "${it.lon},${it.lat}") }
+        pois.forEach { addPoiRow(it.name, "${it.lat},${it.lon}") }
 
         val addBtn = TextView(ctx).apply {
             text = "+ Add"
@@ -550,7 +550,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                                 isClickable = true
                                 setOnClickListener {
                                     nameField.setText(shortName)
-                                    coordField.setText("%.6f,%.6f".format(lon, lat))
+                                    coordField.setText("%.6f,%.6f".format(lat, lon))
                                     restoreConfigureView()
                                 }
                             })
@@ -590,6 +590,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
         private var currentLon: Double? = null
         private var gpsSpeedKmh: Float  = 0f
         private var gpsBearing: Float?  = null
+        private var consecutiveFastUpdates: Int = 0
 
         private val rotationMatrix    = FloatArray(9)
         private val orientationAngles = FloatArray(3)
@@ -600,7 +601,7 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     SensorManager.getOrientation(rotationMatrix, orientationAngles)
                     val azimuth = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                    currentHeadingDeg = if (gpsSpeedKmh > 5f && gpsBearing != null) gpsBearing!! else azimuth
+                    currentHeadingDeg = if (consecutiveFastUpdates >= 2 && gpsBearing != null) gpsBearing!! else azimuth
                     updateArrows()
                 }
             }
@@ -612,6 +613,11 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
             gpsBearing  = if (location.hasBearing()) location.bearing else null
             currentLat  = location.latitude
             currentLon  = location.longitude
+            if (gpsSpeedKmh >= 5f) {
+                if (consecutiveFastUpdates < 2) consecutiveFastUpdates++
+            } else {
+                consecutiveFastUpdates = 0
+            }
             updateArrows()
         }
 
@@ -681,15 +687,15 @@ class PointersPane(private val bridge: ServiceBridge) : PaneContent {
     }
 
     private fun savePois(list: List<Poi>) {
-        bridge.putStringPref(KEY_POINTER_POIS, list.joinToString("\n") { "${it.name}|${it.lon},${it.lat}" })
+        bridge.putStringPref(KEY_POINTER_POIS, list.joinToString("\n") { "${it.name}|${it.lat},${it.lon}" })
     }
 
     private fun parsePoi(name: String, coords: String): Poi? {
         if (name.isEmpty() || coords.isEmpty()) return null
         val parts = coords.split(",")
         if (parts.size != 2) return null
-        val lon = parts[0].trim().toDoubleOrNull() ?: return null
-        val lat = parts[1].trim().toDoubleOrNull() ?: return null
+        val lat = parts[0].trim().toDoubleOrNull() ?: return null
+        val lon = parts[1].trim().toDoubleOrNull() ?: return null
         return Poi(name, lon, lat)
     }
 
