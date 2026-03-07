@@ -8,106 +8,114 @@ import android.util.TypedValue
 import android.view.View
 
 // ---------------------------------------------------------------------------
-// CpuCoresView
+// LoadHistogramView
 //
-// Horizontal bar for each CPU core, dynamically sized by core count.
-// Bar fill transitions amber → orange → red at 60% / 85% load.
-// Label "C0", "C1", … on the left; "XX%" value on the right.
+// Scrolling bar histogram of system load average (1-min) over time.
+// Fixed height of 100dp. Y-axis scales to numCores so a fully-loaded system
+// reaches 100%. Colour transitions amber → orange → red at 60% / 85%.
+// Newest sample is on the right; older samples scroll left.
+// A faint horizontal line marks the "1 core" load level.
+// Current load value is printed top-right.
 // ---------------------------------------------------------------------------
-class CpuCoresView(context: Context) : View(context) {
+class LoadHistogramView(context: Context) : View(context) {
 
-    private var coreUsages: FloatArray = FloatArray(0)
+    private val HISTORY_SIZE = 120          // 2 minutes at 1 sample/s
+    private val HEIGHT_DP    = 100f
+    private val BAR_GAP_DP   = 1f
+    private val PAD_DP       = 6f
 
-    private val BAR_HEIGHT_DP = 12f
-    private val BAR_GAP_DP   = 6f
-    private val LABEL_W_DP   = 28f
-    private val PAD_DP       = 8f
+    private val history = ArrayDeque<Float>(HISTORY_SIZE)
+    var numCores: Int = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#0D0D0D")
         style = Paint.Style.FILL
     }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#2A2A2A")
-        style = Paint.Style.FILL
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
     }
-    private val fillPaintAmber = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val barPaintAmber = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#F57C00")
         style = Paint.Style.FILL
     }
-    private val fillPaintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val barPaintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FF5722")
         style = Paint.Style.FILL
     }
-    private val fillPaintRed = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val barPaintRed = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#F44336")
         style = Paint.Style.FILL
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#808080")
+        color = Color.parseColor("#B0B0B0")
         textSize = sp(8f)
         textAlign = Paint.Align.RIGHT
         typeface = android.graphics.Typeface.MONOSPACE
     }
-    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#B0B0B0")
-        textSize = sp(8f)
-        textAlign = Paint.Align.LEFT
-        typeface = android.graphics.Typeface.MONOSPACE
+    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#404040")
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(4f, 4f), 0f)
     }
 
-    fun update(usages: FloatArray) {
-        coreUsages = usages
+    fun update(load1min: Float) {
+        if (history.size >= HISTORY_SIZE) history.removeFirst()
+        history.addLast(load1min)
         invalidate()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        val n = coreUsages.size.coerceAtLeast(1)
-        val h = (PAD_DP * 2 + n * BAR_HEIGHT_DP + (n - 1) * BAR_GAP_DP)
-        setMeasuredDimension(w, dp(h).toInt())
+        setMeasuredDimension(w, dp(HEIGHT_DP).toInt())
     }
 
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
+        val w    = width.toFloat()
+        val h    = height.toFloat()
         val pad  = dp(PAD_DP)
-        val barH = dp(BAR_HEIGHT_DP)
         val gap  = dp(BAR_GAP_DP)
-        val lblW = dp(LABEL_W_DP)
+        val plotH = h - pad * 2f
+        val plotTop = pad
+        val plotBot = h - pad
 
+        // Background
         canvas.drawRoundRect(0f, 0f, w, h, dp(6f), dp(6f), bgPaint)
 
-        val barLeft  = pad + lblW + dp(4f)
-        val barRight = w - pad - dp(36f)   // reserve right gutter for % value
+        if (history.isEmpty()) return
 
-        for (i in coreUsages.indices) {
-            val fraction = coreUsages[i].coerceIn(0f, 1f)
-            val top  = pad + i * (barH + gap)
-            val bot  = top + barH
-            val r    = barH / 2f
+        val maxLoad = numCores.toFloat()
 
-            // Label
-            val textY = top + barH / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f
-            canvas.drawText("C$i", pad + lblW, textY, labelPaint)
-
-            // Track
-            canvas.drawRoundRect(barLeft, top, barRight, bot, r, r, trackPaint)
-
-            // Fill
-            if (fraction > 0f) {
-                val fillRight = barLeft + (barRight - barLeft) * fraction
-                val fillPaint = when {
-                    fraction < 0.60f -> fillPaintAmber
-                    fraction < 0.85f -> fillPaintOrange
-                    else             -> fillPaintRed
-                }
-                canvas.drawRoundRect(barLeft, top, fillRight, bot, r, r, fillPaint)
-            }
-
-            // Value
-            canvas.drawText("%3d%%".format((fraction * 100).toInt()), barRight + dp(4f), textY, valuePaint)
+        // Dashed grid lines at each integer core boundary within range
+        for (c in 1..numCores) {
+            val y = plotBot - (c.toFloat() / maxLoad) * plotH
+            if (y >= plotTop) canvas.drawLine(pad, y, w - pad, y, axisPaint)
         }
+
+        // Bars — fit all history into available width
+        val n         = history.size
+        val totalGap  = gap * (n - 1)
+        val barW      = ((w - pad * 2f - totalGap) / n).coerceAtLeast(1f)
+
+        history.forEachIndexed { idx, load ->
+            val fraction  = (load / maxLoad).coerceIn(0f, 1f)
+            val barHeight = fraction * plotH
+            val left      = pad + idx * (barW + gap)
+            val right     = left + barW
+            val top       = plotBot - barHeight
+            val barPaint  = when {
+                fraction < 0.60f -> barPaintAmber
+                fraction < 0.85f -> barPaintOrange
+                else             -> barPaintRed
+            }
+            canvas.drawRect(left, top, right, plotBot, barPaint)
+        }
+
+        // Current value label (top-right)
+        val latest = history.last()
+        canvas.drawText("%.2f".format(latest), w - dp(4f), pad + labelPaint.textSize, labelPaint)
     }
 
     private fun dp(v: Float) = TypedValue.applyDimension(
