@@ -64,7 +64,6 @@
             android:exported="true"
             android:theme="@style/Theme.Androbuttons.Transparent"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
