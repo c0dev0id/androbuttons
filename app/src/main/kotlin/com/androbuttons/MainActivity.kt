@@ -45,11 +45,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Provide an empty transparent content view so the window manager gets the first
-        // frame it expects on Android 15 (API 35). Without setContentView(), Material3
-        // targeting API 35 can stall or fail silently in super.onCreate(), killing the
-        // process before startForegroundService() has any effect.
-        setContentView(android.widget.FrameLayout(this))
         checkAndRequestPermissions()
     }
 
