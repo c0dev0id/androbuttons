@@ -13,6 +13,14 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
+    // Android 15 (API 35) only: startForegroundService() throws ForegroundServiceStartNotAllowed
+    // when called from an ActivityResultLauncher callback, because the callback fires before
+    // onResume() and the activity is only STARTED (not RESUMED) at that point.
+    // On Android 14 and below we keep the original direct-call behaviour so that the overlay
+    // slide-in animation is not affected by any additional delay.
+    private var pendingServiceStart = false
+    private var resumed = false
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
@@ -46,6 +54,16 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRequestPermissions()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        if (pendingServiceStart) {
+            pendingServiceStart = false
+            startOverlayService()
+            finish()
+        }
     }
 
     private fun checkAndRequestPermissions() {
@@ -96,9 +114,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // All permissions handled — start the overlay service and exit
-        startOverlayService()
-        finish()
+        // All permissions granted — start the overlay service and exit.
+        // Android 15+ (API 35): defer to onResume() to satisfy foreground state requirement.
+        // Android 14 and below: call directly, as in v0.0.62, preserving animation timing.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            pendingServiceStart = true
+            if (resumed) {
+                pendingServiceStart = false
+                startOverlayService()
+                finish()
+            }
+        } else {
+            startOverlayService()
+            finish()
+        }
     }
 
     private fun startOverlayService() {
