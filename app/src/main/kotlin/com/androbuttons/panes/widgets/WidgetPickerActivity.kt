@@ -228,12 +228,12 @@ class WidgetPickerActivity : AppCompatActivity() {
                 }
             }
             REQUEST_CONFIGURE -> {
-                if (resultCode == RESULT_OK) {
-                    saveAndFinish()
-                } else {
-                    // User cancelled or did not complete configuration — discard the widget.
-                    releaseAndFinish()
-                }
+                // Always save after a configure activity runs, regardless of result code.
+                // Lawnchair/Launcher3 does the same: many providers incorrectly return
+                // RESULT_CANCELED even after successful configuration, and a provider crash
+                // also surfaces as RESULT_CANCELED. Discarding on cancel would silently lose
+                // the widget in both cases.
+                saveAndFinish()
             }
         }
     }
@@ -254,10 +254,12 @@ class WidgetPickerActivity : AppCompatActivity() {
                 AppWidgetHostManager.getHost(this)
                     .startAppWidgetConfigureActivityForResult(this, pendingAppWidgetId, 0, REQUEST_CONFIGURE, null)
                 return  // wait for onActivityResult(REQUEST_CONFIGURE)
-            } catch (_: android.content.ActivityNotFoundException) {
-                // Configure activity is declared but unreachable — cannot configure this
-                // widget, so discard it rather than adding a broken, unconfigured widget.
-                releaseAndFinish()
+            } catch (_: Exception) {
+                // Configure activity is unavailable or failed to start (ActivityNotFoundException,
+                // SecurityException, RuntimeException from rethrowFromSystemServer, etc.).
+                // Add the widget without configuration rather than silently discarding it —
+                // many widgets still work in their default state.
+                saveAndFinish()
                 return
             }
         }
