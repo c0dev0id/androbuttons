@@ -1,5 +1,6 @@
 package com.androbuttons
 
+import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -11,7 +12,9 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -31,6 +34,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ViewFlipper
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
 import com.androbuttons.common.Theme
@@ -71,6 +76,7 @@ class OverlayService : Service(), ServiceBridge {
         private const val KEY_PANE_ORDER    = "pane_order"
         private const val KEY_WIDGET_NEXTID = "widget_next_id"
         private const val DEFAULT_PANE_ORDER = "music,apps,contact,sensors,markers,pointers,system"
+        private const val GITHUB_API_RELEASES = "https://api.github.com/repos/c0dev0id/androbuttons/releases"
 
         private val FIXED_PANE_LABELS = mapOf(
             "music"    to "Music",
@@ -601,12 +607,139 @@ class OverlayService : Service(), ServiceBridge {
             setOnClickListener { applyNewPaneOrder(managerOrder.toList()) }
         }
 
+        val updateBtn = TextView(this).apply {
+            text = "↻  Check for Update"
+            textSize = 15f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(Theme.textSecondary)
+            background = actionButtonBg(Theme.inactiveBg, this@OverlayService)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = 10.dp(); rightMargin = 10.dp(); topMargin = 6.dp() }
+            setPadding(12.dp(), 16.dp(), 12.dp(), 16.dp())
+            isClickable = true
+            setOnClickListener { showUpdateTypeDialog() }
+        }
+
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(scroll)
             addView(addBtn)
+            addView(updateBtn)
             addView(doneBtn)
         }
+    }
+
+    // =========================================================================
+    // Auto-update
+    // =========================================================================
+
+    private fun showUpdateTypeDialog() {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Check for Update")
+            .setMessage("Which version do you want to check?")
+            .setPositiveButton("Release")     { _, _ -> checkForUpdate(prerelease = false) }
+            .setNegativeButton("Development") { _, _ -> checkForUpdate(prerelease = true)  }
+            .setNeutralButton("Cancel", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+    }
+
+    private fun checkForUpdate(prerelease: Boolean) {
+        val mainHandler = Handler(Looper.getMainLooper())
+        Thread {
+            try {
+                val conn = java.net.URL(GITHUB_API_RELEASES).openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("Accept", "application/vnd.github+json")
+                conn.setRequestProperty("User-Agent", "Androbuttons")
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                val json = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+
+                val releases = org.json.JSONArray(json)
+                var target: org.json.JSONObject? = null
+                for (i in 0 until releases.length()) {
+                    val r = releases.getJSONObject(i)
+                    if (r.getBoolean("prerelease") == prerelease) { target = r; break }
+                }
+                if (target == null) {
+                    mainHandler.post { showUpdateInfo("No ${if (prerelease) "development" else "release"} version found.") }
+                    return@Thread
+                }
+
+                val tagName = target.getString("tag_name").trimStart('v')
+                val currentVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+                if (tagName == currentVersion) {
+                    mainHandler.post { showUpdateInfo("You are already on version $currentVersion.") }
+                    return@Thread
+                }
+
+                var apkUrl: String? = null
+                val assets = target.getJSONArray("assets")
+                for (i in 0 until assets.length()) {
+                    val a = assets.getJSONObject(i)
+                    if (a.getString("name").endsWith(".apk")) { apkUrl = a.getString("browser_download_url"); break }
+                }
+                if (apkUrl == null) {
+                    mainHandler.post { showUpdateInfo("Version $tagName found but no APK attached to the release.") }
+                    return@Thread
+                }
+                val url = apkUrl
+                mainHandler.post { promptInstall(tagName, url) }
+            } catch (e: Exception) {
+                mainHandler.post { showUpdateInfo("Update check failed: ${e.message}") }
+            }
+        }.start()
+    }
+
+    private fun promptInstall(tagName: String, apkUrl: String) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Update Available")
+            .setMessage("Version $tagName is available. Download and install?")
+            .setPositiveButton("Install") { _, _ -> downloadAndInstall(apkUrl) }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+    }
+
+    private fun downloadAndInstall(apkUrl: String) {
+        val mainHandler = Handler(Looper.getMainLooper())
+        Thread {
+            try {
+                val conn = java.net.URL(apkUrl).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 30000
+                conn.readTimeout = 120000
+                conn.connect()
+                val apkDir = File(cacheDir, "apk").apply { mkdirs() }
+                val apkFile = File(apkDir, "update.apk")
+                conn.inputStream.use { it.copyTo(apkFile.outputStream()) }
+                conn.disconnect()
+
+                val uri = FileProvider.getUriForFile(this, "com.androbuttons.fileprovider", apkFile)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                mainHandler.post { showUpdateInfo("Download failed: ${e.message}") }
+            }
+        }.start()
+    }
+
+    private fun showUpdateInfo(msg: String) {
+        val dialog = AlertDialog.Builder(this)
+            .setMessage(msg)
+            .setPositiveButton("OK", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
     }
 
     private fun buildManagerRow(index: Int): LinearLayout {
