@@ -45,6 +45,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Provide an empty transparent content view so the window manager gets the first
+        // frame it expects on Android 15 (API 35). Without setContentView(), Material3
+        // targeting API 35 can stall or fail silently in super.onCreate(), killing the
+        // process before startForegroundService() has any effect.
+        setContentView(android.widget.FrameLayout(this))
         checkAndRequestPermissions()
     }
 
@@ -96,9 +101,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // All permissions handled — start the overlay service and exit
+        // All permissions handled — start the overlay service and exit.
+        // Post finish() to the main looper so the activity reaches onResume() first.
+        // On Android 15, calling finish() from onCreate() before the window is drawn can
+        // prevent the foreground service from being considered "started from foreground".
         startOverlayService()
-        finish()
+        android.os.Handler(mainLooper).post { finish() }
     }
 
     private fun startOverlayService() {
