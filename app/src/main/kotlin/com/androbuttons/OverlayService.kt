@@ -30,6 +30,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ViewFlipper
+import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
 import com.androbuttons.common.PaneContent
 import com.androbuttons.common.ServiceBridge
@@ -184,7 +185,18 @@ class OverlayService : Service(), ServiceBridge {
         // Instantiate panes from saved order; views are built lazily in showOverlay()
         panes = buildPanes()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Android 14+ (API 34+) requires passing the declared foregroundServiceType to
+        // startForeground(); omitting it throws MissingForegroundServiceTypeException.
+        // The 3-arg overload was added in API 29; FOREGROUND_SERVICE_TYPE_SPECIAL_USE in API 34.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            else
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            startForeground(NOTIFICATION_ID, buildNotification(), fgsType)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
         AppWidgetHostManager.getHost(this).startListening()
     }
 
