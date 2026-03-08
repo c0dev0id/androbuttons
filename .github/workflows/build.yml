@@ -125,7 +125,7 @@ jobs:
             Automated development build from commit ${{ github.sha }} on ${{ github.ref_name }}.
 
             This is a pre-release snapshot — not intended for production use.
-          draft: true
+          draft: false
           prerelease: true
           make_latest: false
           files: ${{ env.apk_name }}
