@@ -709,15 +709,81 @@ class OverlayService : Service(), ServiceBridge {
 
     private fun downloadAndInstall(apkUrl: String) {
         val mainHandler = Handler(Looper.getMainLooper())
+        var cancelled = false
+
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = 20.dp(); rightMargin = 20.dp(); topMargin = 12.dp() }
+        }
+        val statusLabel = TextView(this).apply {
+            text = "Connecting…"
+            setTextColor(Theme.textSecondary)
+            textSize = 12f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8.dp(); bottomMargin = 8.dp() }
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(progressBar)
+            addView(statusLabel)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Downloading Update")
+            .setView(container)
+            .setNegativeButton("Cancel") { _, _ -> cancelled = true }
+            .setCancelable(false)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+
         Thread {
             try {
                 val conn = java.net.URL(apkUrl).openConnection() as java.net.HttpURLConnection
                 conn.connectTimeout = 30000
                 conn.readTimeout = 120000
                 conn.connect()
+                if (cancelled) { conn.disconnect(); mainHandler.post { dialog.dismiss() }; return@Thread }
+
+                val total = conn.contentLengthLong
+                if (total > 0) mainHandler.post {
+                    progressBar.isIndeterminate = false
+                    progressBar.max = 100
+                }
+
                 val apkDir = File(cacheDir, "apk").apply { mkdirs() }
                 val apkFile = File(apkDir, "update.apk")
-                conn.inputStream.use { it.copyTo(apkFile.outputStream()) }
+                var downloaded = 0L
+                val buf = ByteArray(8192)
+                conn.inputStream.use { input ->
+                    apkFile.outputStream().use { out ->
+                        var n: Int
+                        while (input.read(buf).also { n = it } != -1) {
+                            if (cancelled) {
+                                apkFile.delete()
+                                conn.disconnect()
+                                mainHandler.post { dialog.dismiss() }
+                                return@Thread
+                            }
+                            out.write(buf, 0, n)
+                            downloaded += n
+                            if (total > 0) {
+                                val pct = (downloaded * 100 / total).toInt()
+                                mainHandler.post {
+                                    progressBar.progress = pct
+                                    statusLabel.text = "${fmtBytes(downloaded)} / ${fmtBytes(total)}"
+                                }
+                            } else {
+                                mainHandler.post { statusLabel.text = "${fmtBytes(downloaded)} downloaded" }
+                            }
+                        }
+                    }
+                }
                 conn.disconnect()
 
                 val uri = FileProvider.getUriForFile(this, "com.androbuttons.fileprovider", apkFile)
@@ -726,11 +792,17 @@ class OverlayService : Service(), ServiceBridge {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                startActivity(intent)
+                mainHandler.post { dialog.dismiss(); startActivity(intent) }
             } catch (e: Exception) {
-                mainHandler.post { showUpdateInfo("Download failed: ${e.message}") }
+                mainHandler.post { dialog.dismiss(); showUpdateInfo("Download failed: ${e.message}") }
             }
         }.start()
+    }
+
+    private fun fmtBytes(b: Long): String = when {
+        b >= 1_048_576 -> "%.1f MB".format(b / 1_048_576.0)
+        b >= 1_024     -> "%.0f KB".format(b / 1_024.0)
+        else           -> "$b B"
     }
 
     private fun showUpdateInfo(msg: String) {
