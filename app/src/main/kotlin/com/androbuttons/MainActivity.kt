@@ -102,11 +102,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         // All permissions handled — start the overlay service and exit.
-        // Post finish() to the main looper so the activity reaches onResume() first.
-        // On Android 15, calling finish() from onCreate() before the window is drawn can
-        // prevent the foreground service from being considered "started from foreground".
-        startOverlayService()
-        android.os.Handler(mainLooper).post { finish() }
+        // Both startForegroundService() and finish() are posted to the main looper so they
+        // run after onResume(). On Android 15, startForegroundService() called from onCreate()
+        // (before onStart/onResume) throws ForegroundServiceStartNotAllowed because the app
+        // is not yet in the foreground state. Deferring past onResume() fixes this.
+        android.os.Handler(mainLooper).post {
+            startOverlayService()
+            finish()
+        }
     }
 
     private fun startOverlayService() {
