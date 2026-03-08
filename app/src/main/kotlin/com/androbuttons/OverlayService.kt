@@ -30,6 +30,7 @@ import android.text.InputType
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ViewFlipper
@@ -731,7 +732,7 @@ class OverlayService : Service(), ServiceBridge {
         val mainHandler = Handler(Looper.getMainLooper())
         var cancelled = false
 
-        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+        val progressBar: ProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             isIndeterminate = true
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
