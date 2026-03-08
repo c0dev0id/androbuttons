@@ -184,34 +184,14 @@ class OverlayService : Service(), ServiceBridge {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            android.util.Log.e("OverlayService", "Uncaught exception on ${thread.name}", throwable)
-            defaultHandler?.uncaughtException(thread, throwable)
-        }
         super.onCreate()
         isRunning = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // Instantiate panes from saved order; views are built lazily in showOverlay()
         panes = buildPanes()
-        try {
-            createNotificationChannel()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification(),
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                            or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, buildNotification())
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("OverlayService", "startForeground failed", e)
-            stopSelf()
-            return
-        }
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification())
         AppWidgetHostManager.getHost(this).startListening()
     }
 
@@ -287,6 +267,8 @@ class OverlayService : Service(), ServiceBridge {
             gravity = Gravity.END or Gravity.TOP
             x = 0
             y = visibleStatusBarHeight
+            @Suppress("DEPRECATION")
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
         windowParams = params
         view.translationX = overlayWidth.toFloat()
