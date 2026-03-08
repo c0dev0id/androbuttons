@@ -13,9 +13,6 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private var pendingServiceStart = false
-    private var resumed = false
-
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
@@ -49,14 +46,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRequestPermissions()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        resumed = true
-        if (pendingServiceStart) {
-            launchServiceAndFinish()
-        }
     }
 
     private fun checkAndRequestPermissions() {
@@ -107,17 +96,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // All permissions handled — start the overlay service once onResume() has run.
-        // On Android 15, startForegroundService() called before onResume() throws
-        // ForegroundServiceStartNotAllowed because the app is not yet in foreground state.
-        pendingServiceStart = true
-        if (resumed) {
-            launchServiceAndFinish()
-        }
-    }
-
-    private fun launchServiceAndFinish() {
-        pendingServiceStart = false
+        // All permissions handled — start the overlay service and exit
         startOverlayService()
         finish()
     }
