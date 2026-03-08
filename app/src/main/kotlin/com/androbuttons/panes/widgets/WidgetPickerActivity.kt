@@ -255,11 +255,16 @@ class WidgetPickerActivity : AppCompatActivity() {
                     .startAppWidgetConfigureActivityForResult(this, pendingAppWidgetId, 0, REQUEST_CONFIGURE, null)
                 return  // wait for onActivityResult(REQUEST_CONFIGURE)
             } catch (_: Exception) {
-                // Configure activity is unavailable or failed to start (ActivityNotFoundException,
-                // SecurityException, RuntimeException from rethrowFromSystemServer, etc.).
-                // Add the widget without configuration rather than silently discarding it —
-                // many widgets still work in their default state.
-                saveAndFinish()
+                // The configure activity is declared but could not be launched. We cannot
+                // add the widget without configuration — the provider won't send RemoteViews
+                // until configuration completes, so the widget would be stuck in a permanent
+                // loading state. Release the allocated ID and inform the user.
+                android.widget.Toast.makeText(
+                    this,
+                    "Widget could not be configured (configure screen unavailable)",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                releaseAndFinish()
                 return
             }
         }
