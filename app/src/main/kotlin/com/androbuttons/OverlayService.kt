@@ -774,19 +774,21 @@ class OverlayService : Service(), ServiceBridge {
                             managerRowViews.add(toIdx, managerRowViews.removeAt(fromIdx))
                         }
 
-                        // Rebuild container child order
-                        if (container != null) {
-                            container.removeAllViews()
-                            managerRowViews.forEach { container.addView(it) }
-                        }
-
-                        // Reset all row backgrounds
-                        managerRowViews.forEach { it.background = buttonBg(false, this@OverlayService) }
-
+                        // Reset interaction state before the post
                         managerSortingMode = false
                         managerSortDragIndex = -1
                         managerDragTargetIndex = -1
                         managerRowScroll?.requestDisallowInterceptTouchEvent(false)
+
+                        // Defer view-hierarchy rebuild to after the current touch dispatch
+                        // finishes. Calling removeAllViews() on the container that owns
+                        // the active touch view while still inside the touch listener
+                        // triggers dispatchDetachedFromWindow() mid-dispatch and crashes.
+                        container?.post {
+                            container.removeAllViews()
+                            managerRowViews.forEach { container.addView(it) }
+                            managerRowViews.forEach { it.background = buttonBg(false, this@OverlayService) }
+                        }
                     }
                 }
                 true

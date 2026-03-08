@@ -364,24 +364,28 @@ class AppsPane(private val bridge: ServiceBridge) : PaneContent {
 
                             // Commit the move
                             val fromIdx = sortDragIndex
-                            val toIdx = sortDragTargetIndex.coerceIn(0, (appEntries.size - 1).coerceAtLeast(0))
+                            val toIdx = sortDragTargetIndex.coerceIn(0, (appButtonViews.size - 1).coerceAtLeast(0))
                             if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
                                 appEntries.add(toIdx, appEntries.removeAt(fromIdx))
                                 appButtonViews.add(toIdx, appButtonViews.removeAt(fromIdx))
                             }
 
-                            // Rebuild container child order
-                            if (container != null) {
-                                container.removeAllViews()
-                                appButtonViews.forEach { container.addView(it) }
-                            }
-
+                            // Reset interaction state before the post
                             sortingMode = false
                             sortDragIndex = -1
                             sortDragTargetIndex = -1
                             appScrollView?.requestDisallowInterceptTouchEvent(false)
                             saveSelectedApps(appEntries.map { it.label to it.packageName })
-                            refreshAppList()
+
+                            // Defer view-hierarchy rebuild to after the current touch dispatch
+                            // finishes. Calling removeAllViews() on the container that owns
+                            // the active touch view while still inside the touch listener
+                            // triggers dispatchDetachedFromWindow() mid-dispatch and crashes.
+                            container?.post {
+                                container.removeAllViews()
+                                appButtonViews.forEach { container.addView(it) }
+                                refreshAppList()
+                            }
                         }
                     }
                     true
