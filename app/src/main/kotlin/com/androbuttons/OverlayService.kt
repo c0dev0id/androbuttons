@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.appwidget.AppWidgetHost
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -71,8 +73,7 @@ class OverlayService : Service(), ServiceBridge {
         private const val DEFAULT_KEY_RIGHT  = KeyEvent.KEYCODE_DPAD_RIGHT
         private const val DEFAULT_KEY_ENTER  = KeyEvent.KEYCODE_ENTER
         private const val DEFAULT_KEY_CANCEL = KeyEvent.KEYCODE_ESCAPE
-        private const val SECONDARY_KEY_ENTER  = KeyEvent.KEYCODE_BUTTON_Y
-        private const val SECONDARY_KEY_CANCEL = KeyEvent.KEYCODE_BUTTON_A
+        private const val REMOTE_KEYPRESS_ACTION = "com.thorkracing.wireddevices.keypress"
 
         private const val KEY_PANE_ORDER    = "pane_order"
         private const val KEY_WIDGET_NEXTID = "widget_next_id"
@@ -90,6 +91,35 @@ class OverlayService : Service(), ServiceBridge {
         )
 
         var isRunning = false
+    }
+
+    // ---- Remote controller support ------------------------------------------
+
+    private enum class RemoteDeviceModel { Remote1, Remote2, Remote3, SilverFoxB8J, SilverFoxH1, None }
+    private var deviceModel = RemoteDeviceModel.None
+
+    private fun setRemoteModel(deviceName: String) {
+        deviceModel = when (deviceName) {
+            "DMD-Remote1"  -> RemoteDeviceModel.Remote1
+            "DMD-Remote2"  -> RemoteDeviceModel.Remote2
+            "DMD-Remote3"  -> RemoteDeviceModel.Remote3
+            "SilverFoxB8J" -> RemoteDeviceModel.SilverFoxB8J
+            "SilverFoxH1"  -> RemoteDeviceModel.SilverFoxH1
+            else           -> deviceModel
+        }
+    }
+
+    private val remoteListener = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != REMOTE_KEYPRESS_ACTION) return
+            if (intent.hasExtra("deviceName")) {
+                val device = intent.getStringExtra("deviceName")
+                if (!device.isNullOrEmpty()) setRemoteModel(device)
+            }
+            if (intent.hasExtra("key_press")) {
+                handleKey(intent.getIntExtra("key_press", 0))
+            }
+        }
     }
 
     // ---- Android service boilerplate ----------------------------------------
@@ -193,6 +223,12 @@ class OverlayService : Service(), ServiceBridge {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         AppWidgetHostManager.getHost(this).startListening()
+        val filter = IntentFilter(REMOTE_KEYPRESS_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(remoteListener, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(remoteListener, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -202,6 +238,7 @@ class OverlayService : Service(), ServiceBridge {
 
     override fun onDestroy() {
         isRunning = false
+        try { unregisterReceiver(remoteListener) } catch (_: Exception) {}
         super.onDestroy()
         panes.forEach { it.onDestroy() }
         removeOverlay()
@@ -330,12 +367,6 @@ class OverlayService : Service(), ServiceBridge {
         rootContainer = container
         container.addView(buildTitleBar())
         container.addView(buildFlipperView())
-        container.isFocusable = true
-        container.isFocusableInTouchMode = true
-        container.setOnKeyListener { _, keyCode, event ->
-            if (event.action == KeyEvent.ACTION_DOWN) handleKey(keyCode) else false
-        }
-
         return container
     }
 
@@ -1162,7 +1193,7 @@ class OverlayService : Service(), ServiceBridge {
 
         // While pane manager is open, only cancel key is handled (to exit manager)
         if (inPaneManager) {
-            return if (keyCode == cancelKey || keyCode == SECONDARY_KEY_CANCEL) {
+            return if (keyCode == cancelKey) {
                 exitPaneManager(); true
             } else false
         }
@@ -1178,10 +1209,10 @@ class OverlayService : Service(), ServiceBridge {
         return when (keyCode) {
             rightKey -> { if (currentPane < panes.size - 1) navigateToPane(currentPane + 1); true }
             leftKey  -> { if (currentPane > 0)             navigateToPane(currentPane - 1); true }
-            upKey    -> { pane.onUp();    true }
-            downKey  -> { pane.onDown();  true }
-            enterKey, SECONDARY_KEY_ENTER  -> { pane.onEnter();  true }
-            cancelKey, SECONDARY_KEY_CANCEL -> {
+            upKey,   136 -> { pane.onUp();    true }  // 136 = SWITCH IN
+            downKey, 137 -> { pane.onDown();  true }  // 137 = SWITCH OUT
+            enterKey -> { pane.onEnter();  true }
+            cancelKey -> {
                 if (!pane.onCancel()) hideOverlay()
                 true
             }
